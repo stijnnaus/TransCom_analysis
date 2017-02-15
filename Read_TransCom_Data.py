@@ -12,6 +12,7 @@ from numpy import array
 import matplotlib.pylab as plt
 from netCDF4 import Dataset
 import time
+import pandas as pd
 
 def grid_yav(data):
     ''' From monthly global grid data, computes yearly averages for MCF and CH4 '''
@@ -93,7 +94,7 @@ def read_stat_data(direc,sty,edy,stations='All'):
             data_stat.append([yr,mo,mcf,ch4])
     data_srt = sort_stat(data_stat) # sort data by year and month
     yrs,data_sel = select_time(data_srt,sty,edy) # select the relevant years
-    data_ref = stat_reform(data_sel) # shape it in the good shape
+    data_ref = stat_reform2(data_sel) # shape it in the good shape
     return yrs,data_ref
 
 def sort_stat(data):
@@ -154,6 +155,29 @@ def stat_reform(data):
         #datar.append([ch4_st,mcf_st]) if you want [ist][mcf/ch4] instead of [mcf/ch4][ist]
     return array([array(ch4_tot),array(mcf_tot)])
 
+def stat_reform2(data):
+    '''
+    This function takes the sorted, selected array and groups the data in groups
+    of 1 year. The monthly distinction is removed.
+    Output is: ch4,mcf[istation][iyear][imeas]
+    '''
+    ch4_tot,mcf_tot = [],[] # all data from all stations
+    nst = len(data[0][0][0])
+    for ist in range(nst):
+        ch4_st = []; mcf_st = [] # all data from 1 station
+        for iy, datay in enumerate(data):
+            ch4_sty = []; mcf_sty = [] # 1 year from 1 station
+            for im,datam in enumerate(datay):
+                nd = len(datam[0][ist])
+                for di in range(nd):
+                    ch4_sty.append(datay[im][0][ist][di]) # 1 meas
+                    mcf_sty.append(datay[im][1][ist][di])
+            ch4_st.append(array(ch4_sty)) 
+            mcf_st.append(array(mcf_sty))
+        ch4_tot.append(array(ch4_st))
+        mcf_tot.append(array(mcf_st))
+    return array(ch4_tot), array(mcf_tot)
+
 def unpack_hdf(data):
     ''' 
     Uses the name of the HDF source of a nc station dataset to find out the 
@@ -162,15 +186,13 @@ def unpack_hdf(data):
     name = data.hdf_source
     yr,mo = int(name[8:12]), int(name[12:14])
     return yr,mo
-    
 
 def calc_pfield(at,bt,p0):
-    '''Convert at,bt and p0 to pressure in each grid box'''
-    pres = np.zeros((nz+1,ny,nx))
-    for i in range(nx):
-        for j in range(ny):
-            pres[:,j,i] = p0[j,i]*bt + at
-    return pres
+    p0r = p0.reshape(1,45,60)
+    atr = at.reshape(26,1,1)
+    btr = bt.reshape(26,1,1)
+    pfield = p0r*btr + atr
+    return pfield
     
 def tropheight(tgrad):
     '''
@@ -205,7 +227,7 @@ def select_unique(l):
             lu.append(e)
     return lu
 
-read_grid = False
+read_grid = True
 read_stat = True
 sty,edy = 1990,2006
 
@@ -284,11 +306,12 @@ ax2.plot(grid_y[:,0],grid_y[:,1],'k-',linewidth=4.,label='Global mean')
 ax1.grid(); ax2.grid()
 ax1.legend(loc='best'); ax2.legend(loc='best')
 
-xar.open_dataset('station_file_002.nc')
-
-
-
-
+m = xar.open_dataset('station_file_002.nc')
+m2 = xar.open_dataset('gridded_data.nc')
+at = m2.at
+bt = m2.bt
+p0 = m2['presm'].values
+aa = calc_pfield(at,bt,p0)
 
 
 
