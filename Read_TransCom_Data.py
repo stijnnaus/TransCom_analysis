@@ -66,11 +66,12 @@ def read_grid_data(direc):
             
             p_all = calc_pfield(at,bt,p0) # 3D pressure field at edges of grid boxes
             p_grad = p_all[:-1]-p_all[1:] # pdif between top/bot grid box
-            temp_grad = temp[:-1]-temp[1:] # temeprature gradient
-            trop = tropheight(temp_grad) 
+            temp_grad = temp[:-1]-temp[1:] # temperature gradient
+            tmask = tropheight(temp_grad) 
             # Weighted means
-            mcf_we = np.sum((trop*p_grad*mcf))/np.sum((trop*p_grad))*1e12
-            ch4_we = np.sum((trop*p_grad*ch4))/np.sum((trop*p_grad))*1e9
+            p_grad, mcf, ch4 = p_grad[tmask],mcf[tmask],ch4[tmask]
+            mcf_we = np.sum((p_grad*mcf))/np.sum((p_grad))*1e12
+            ch4_we = np.sum((p_grad*ch4))/np.sum((p_grad))*1e9
             ari = [yr,mo,ch4_we,mcf_we]
             ar.append(array(ari))
     return array(ar)
@@ -193,22 +194,19 @@ def calc_pfield(at,bt,p0):
     btr = bt.reshape(26,1,1)
     pfield = p0r*btr + atr
     return pfield
-    
+
 def tropheight(tgrad):
     '''
     Compute the height in each gridbox where the temperature gradient gets
     below 2 degree C, ie where the troposphere ends
-    Returns an nz x ny x nx array, where boxes to be included are indicated by
-    one, and the others by zero.
+    Returns a mask
     '''
-    trop = np.ones((nz,ny,nx))
-    for iy in range(ny):
-        for ix in range(nx):
-            for iz in range(10,nz-1):
-                if tgrad[iz,iy,ix] < 2:
-                    trop[iz:,iy,ix] = np.zeros(nz-iz)
-                    break
-    return trop
+    pheight = np.argmax(tgr[9:]<=2,axis=0)+9
+    mask = np.ones(t.shape,dtype='bool')
+    for iy,py in enumerate(pheight):
+        for ix,px in enumerate(py):
+            mask[px:,iy,ix] = False
+    return mask
 
 def load_txt(f):
     ''' Load 1 column text files '''
@@ -308,10 +306,3 @@ ax1.legend(loc='best'); ax2.legend(loc='best')
 
 m = xar.open_dataset('station_file_002.nc')
 m2 = xar.open_dataset('gridded_data.nc')
-at = m2.at
-bt = m2.bt
-p0 = m2['presm'].values
-aa = calc_pfield(at,bt,p0)
-
-
-
