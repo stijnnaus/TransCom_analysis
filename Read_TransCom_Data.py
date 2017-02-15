@@ -66,8 +66,7 @@ def read_grid_data(direc):
             
             p_all = calc_pfield(at,bt,p0) # 3D pressure field at edges of grid boxes
             p_grad = p_all[:-1]-p_all[1:] # pdif between top/bot grid box
-            temp_grad = temp[:-1]-temp[1:] # temperature gradient
-            tmask = tropheight(temp_grad) 
+            tmask = tropheight(temp) 
             # Weighted means
             p_grad, mcf, ch4 = p_grad[tmask],mcf[tmask],ch4[tmask]
             mcf_we = np.sum((p_grad*mcf))/np.sum((p_grad))*1e12
@@ -95,8 +94,8 @@ def read_stat_data(direc,sty,edy,stations='All'):
             data_stat.append([yr,mo,mcf,ch4])
     data_srt = sort_stat(data_stat) # sort data by year and month
     yrs,data_sel = select_time(data_srt,sty,edy) # select the relevant years
-    data_ref = stat_reform2(data_sel) # shape it in the good shape
-    return yrs,data_ref
+    ch4,mcf = stat_reform2(data_sel) # shape it in the good shape
+    return yrs,ch4,mcf
 
 def sort_stat(data):
     '''
@@ -173,8 +172,8 @@ def stat_reform2(data):
                 for di in range(nd):
                     ch4_sty.append(datay[im][0][ist][di]) # 1 meas
                     mcf_sty.append(datay[im][1][ist][di])
-            ch4_st.append(array(ch4_sty)) 
-            mcf_st.append(array(mcf_sty))
+            ch4_st.append(array(ch4_sty[:8760])) 
+            mcf_st.append(array(mcf_sty[:8760]))
         ch4_tot.append(array(ch4_st))
         mcf_tot.append(array(mcf_st))
     return array(ch4_tot), array(mcf_tot)
@@ -195,13 +194,14 @@ def calc_pfield(at,bt,p0):
     pfield = p0r*btr + atr
     return pfield
 
-def tropheight(tgrad):
+def tropheight(t):
     '''
     Compute the height in each gridbox where the temperature gradient gets
     below 2 degree C, ie where the troposphere ends
     Returns a mask
     '''
-    pheight = np.argmax(tgr[9:]<=2,axis=0)+9
+    tgrad = t[:-1]-t[1:]
+    pheight = np.argmax(tgrad[9:]<=2,axis=0)+10
     mask = np.ones(t.shape,dtype='bool')
     for iy,py in enumerate(pheight):
         for ix,px in enumerate(py):
@@ -284,7 +284,7 @@ if read_stat:
     dirc2 = 'TransCom data\Stat data'
     print 'Reading station data ..........'
     start = time.time()
-    yrs,station_data = read_stat_data(dirc2,sty,edy,stations=stat_nos) # station data
+    yrs,ch4_st,mcf_st = read_stat_data(dirc2,sty,edy,stations=stat_nos) # station data
     end = time.time()
     print 'Reading the stat data took',end-start,'seconds'
 

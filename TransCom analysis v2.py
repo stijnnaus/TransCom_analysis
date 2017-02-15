@@ -20,6 +20,7 @@ import netCDF4 as ncdf
 import random as rnd
 from netCDF4 import Dataset
 from mpl_toolkits.basemap import Basemap
+import seaborn as sns
 
 
     
@@ -221,17 +222,84 @@ def filterStationData(data,nsd=2.5):
                             data_w[imo].remove(val) # it is now also removed from data_st and data_rsh!
                             nrm += 1
                 if nrm == 0: cont = False
-    data_or = data_rsh.reshape((nst,nyr,nmo)) # original data shape
+    data_or = data_rsh.reshape((nst,nyr)) # original data shape
     return data_or
-    
-            
-            
+
 def flat(data):
     '''
     Return the flattened array of data, which consists of 1d lists
     '''
-    return array([data[i][j] for j in range(len(data[i])) for i in range(len(data))])
+    return array([[data[i][j] for j in range(len(data[i]))] for i in range(len(data))])
+
+def filterStationData2(data,nsd=2.5,ws=100):
+    '''
+    This routine is designed to filter out the polluted data from the full 
+    station data.
+    The filtering method is adopted from AGAGE. It selects a window with a
+    width of 4 months. Then it iteratively removes all values more than nsd
+    standard deviations above the median of the window, until no more data
+    is removed.
     
+    data: Either MCF or CH4 data.
+    nsd : Number of STD above which a value is considered polluted.
+    ws  : Window spacing, i.e. how many data points the window jumps after 
+            finishing each filter.
+            
+    Returns a boolean mask.
+    '''
+    if len(data)==2: return '!!You are probably trying to filter MCF and CH4 smltsly!!'
+    nst  = len(data)
+    nyr  = len(data[0]) # number of years
+    nmsy = len(data[0][0]) # number of meas per year
+    nms  = nmsy*nyr # total number of meas
+    nmo  = 12*nyr # total number of months
+    nw   = nmsy/12 # width of the filtering window in hours
+    mask_tot = np.ones((nst,nms),dtype='bool')
+    for ist,data_st in enumerate(data):
+        data_fl = data_st.flatten() # flattened data for all years
+        mask_st = mask_tot[ist]
+        for st in range(0,nms+ws,ws):
+            ed = st+nw # end of the window
+            mask_w = mask_st[st:ed]
+            data_w = data_fl[st:ed]
+            ch = True
+            while ch: # continue iterating as long as there are changes
+                med            = np.median(data_w[mask_w])   # median
+                sd             = np.std(data_w[mask_w])      # standard deviation
+                cond           = data_w[mask_w] < med+2.5*sd # check filtering condition
+                if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
+                    ch = False
+                mask_w[mask_w] = cond # implement changes
+            mask_st[st:ed] = mask_w
+        print ist
+    return mask_tot.reshape((nst,nyr,nmsy))
+
+ws = 50
+ch4_mask = filterStationData2(ch4_st,ws=ws)
+ch4_maski = np.invert(ch4_mask)
+ch4_maskf = ch4_mask[0].flatten()
+ch4_maskp = array(np.split(ch4_maskf,12*17))
+ch4_maskmm = np.mean(ch4_maskp,axis=1)
+ch4_maskym = np.mean(ch4_maskf.reshape(17,12*730), axis=1)
+yrs = np.linspace(1990,2006,num=17)
+mos = np.linspace(1990,2006,num=len(ch4_maskmm))
+
+plt.figure()
+plt.title('density of polluted data')
+plt.ylabel('% polluted')
+plt.plot(mos,100-ch4_maskmm*100,'o',label = 'monthly '+str(ws))
+plt.plot(yrs,100-ch4_maskym*100,'-',label = 'yearly '+str(ws),linewidth=2.)
+plt.legend(loc='best')
+
+# setting up pandas
+id_st = stations_all
+id_y = np.arange(1990,2007)
+id_ms = np.arange(1,8761)
+id_time = pd.MultiIndex.from_product([id_y,id_ms],names=['Year', 'Hour'])
+ch4_pn = ch4_st.reshape((12,17*8760))
+#ch4_st[ch4_maski] = 'NaN'
+ch4_stp = pd.DataFrame(ch4_pn, index=[id_st], columns=[id_time]).sort_index()
+
             
     
     
