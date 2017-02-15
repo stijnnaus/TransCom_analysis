@@ -1,0 +1,11 @@
+# List of stations that are initially loaded in the TransCom data
+# Station
+SPO
+CGO
+SMO
+MLO
+KUM
+NWR
+LEF
+BRW
+ALT
