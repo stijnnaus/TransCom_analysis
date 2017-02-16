@@ -252,7 +252,6 @@ def filterStationData2(data,nsd=2.5,ws=100):
     nyr  = len(data[0]) # number of years
     nmsy = len(data[0][0]) # number of meas per year
     nms  = nmsy*nyr # total number of meas
-    nmo  = 12*nyr # total number of months
     nw   = nmsy/12 # width of the filtering window in hours
     mask_tot = np.ones((nst,nms),dtype='bool')
     for ist,data_st in enumerate(data):
@@ -264,23 +263,22 @@ def filterStationData2(data,nsd=2.5,ws=100):
             data_w = data_fl[st:ed]
             ch = True
             while ch: # continue iterating as long as there are changes
-                med            = np.median(data_w[mask_w])   # median
-                sd             = np.std(data_w[mask_w])      # standard deviation
-                cond           = data_w[mask_w] < med+2.5*sd # check filtering condition
+                med  = np.median(data_w[mask_w])   # median
+                sd   = np.std(data_w[mask_w])      # standard deviation
+                cond = data_w[mask_w] < med+2.5*sd # check filtering condition
                 if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
                     ch = False
                 mask_w[mask_w] = cond # implement changes
             mask_st[st:ed] = mask_w
-        print ist
     return mask_tot.reshape((nst,nyr,nmsy))
 
 ws = 50
-ch4_mask = filterStationData2(ch4_st,ws=ws)                       # original mask
-ch4_maski = np.invert(ch4_mask)                                   # inverted mask
-ch4_maskf = ch4_mask[0].flatten()                                 # flattened mask
-ch4_maskp = array(np.split(ch4_maskf,12*17))                      # mask partitioned in months
-ch4_maskmm = np.mean(ch4_maskp,axis=1)                            # monthly mean mask
-ch4_maskym = np.mean(ch4_maskf.reshape(17*4,3*730), axis=1)       # 3-monthly mean mask
+ch4_mask = filterStationData2(ch4_st,ws=ws,nsd=2.5)         # original mask
+ch4_maski = np.invert(ch4_mask)                             # inverted mask
+ch4_maskf = ch4_mask[0].flatten()                           # flattened mask
+ch4_maskp = array(np.split(ch4_maskf,12*17))                # mask partitioned in months
+ch4_maskmm = np.mean(ch4_maskp,axis=1)                      # monthly mean mask
+ch4_maskym = np.mean(ch4_maskf.reshape(17*4,3*730), axis=1) # 3-monthly mean mask
 yrs = np.linspace(1990,2006,num=17*4)
 mos = np.linspace(1990,2006,num=len(ch4_maskmm))
 ch4_stf = ch4_st.copy()
@@ -299,15 +297,68 @@ id_y = np.arange(1990,2007)
 id_ms = np.arange(1,8761)
 id_time = pd.MultiIndex.from_product([id_y,id_ms],names=['Year', 'Hour'])
 ch4_pn = ch4_stf.reshape((12,17*8760))
-#ch4_st[ch4_maski] = 'NaN'
 ch4_stp = pd.DataFrame(ch4_pn, index=id_st, columns=id_time).sort_index()
-ch4_stp_ip = ch4_stp.interpolate(method='linear',axis=1)
+ch4_stp_ip = ch4_stp.interpolate(method='linear',axis=1) # interpolated
+ch4_st_mn = ch4_stp_ip.mean(axis=1,level=0)
 
 plt.figure()
 for st in stations_all:
-    plt.plot(ch4_stp_ip.loc[st].values,'o',label=st)
+    plt.plot(np.arange(1990,2007)+.5,ch4_st_mn.loc[st].values,'o',label=st)
 plt.legend(loc='best')
-    
+
+# ++++++++++++++++++++++++++++++++++
+#               AGAGE
+# FILTERED: 
+ch4_st_agage     = ch4_st_mn.loc[stations_agage]
+ch4_st_gm_agage  = (ch4_st_agage.loc['CGO']+(ch4_st_agage.loc['MHD']+ch4_st_agage.loc['THD'])/2.\
+                    +ch4_st_agage.loc['RPB']+ch4_st_agage.loc['SMO'])/4.
+# UNFILTERED:
+sno_gage         = array([np.where(sid_all==sid_g)[0][0] for sid_g in sid_agage]) # agage indices in sid_all
+ch4_agage_uf     = ch4_st[sno_gage] # unfiltered agage data
+ch4_agage_uf_mn  = np.mean(ch4_agage_uf, axis=2) # unfiltered agage yearly means per station
+ch4_agage_uf_gmn = (ch4_agage_uf_mn[0] + (ch4_agage_uf_mn[1] + ch4_agage_uf_mn[4])/2.\
+                    + ch4_agage_uf_mn[2] + ch4_agage_uf_mn[3])/4. # unfiltered agage global yearly means
+# COMPARISON TO GRIDDED
+stav_ch4 = ch4_st_gm_agage.values
+grav_ch4 = grid_y[1:-1,1]
+dif_fl = grav_ch4 - stav_ch4
+dif_uf = grav_ch4 - ch4_agage_uf_gmn
+
+# +++++++++++++++++++++++++++++++++++
+#               NOAA
+
+yrs = np.arange(1990,2007)+.5
+fig = plt.figure()
+ax1 = fig.add_subplot(211)
+ax2 = fig.add_subplot(212)
+ax1.set_title('Global means CH4')
+ax2.set_title('Difference between station mean and gridded mean')
+ax1.set_ylabel('CH4 (ppb)')
+ax2.set_ylabel('CH4 error (ppb)')
+ax1.plot(yrs,grav_ch4,         'go', label='True')
+ax1.plot(yrs,stav_ch4,         'bo', label='AGAGE filt')
+ax1.plot(yrs,ch4_agage_uf_gmn, 'ro', label='AGAGE unfilt')
+ax2.plot(yrs,dif_fl,           'bo-',label='AGAGE filt')
+ax2.plot(yrs,dif_uf,           'ro-',label='AGAGE unfilt')
+ax2.fill_between(np.linspace(1990,2007), [np.mean(dif_fl)+np.std(dif_fl)]*50, 
+                 [np.mean(dif_fl)-np.std(dif_fl)]*50, color='b',alpha=.3)
+ax2.fill_between(np.linspace(1990,2007), [np.mean(dif_uf)+np.std(dif_uf)]*50, 
+                 [np.mean(dif_uf)-np.std(dif_uf)]*50, color='r',alpha=.3)
+ax2.fill_between(np.linspace(1990,2007), [np.mean(dif_fl)+np.std(dif_fl)/np.sqrt(17.)]*50, 
+                 [np.mean(dif_fl)-np.std(dif_fl)/np.sqrt(17.)]*50, color='b',alpha=.5)
+ax2.fill_between(np.linspace(1990,2007), [np.mean(dif_uf)+np.std(dif_uf)/np.sqrt(17.)]*50, 
+                 [np.mean(dif_uf)-np.std(dif_uf)/np.sqrt(17.)]*50, color='r',alpha=.5)
+#plt.plot(ch4_st_gm_noaa, label='NOAA')
+ax2.plot(np.linspace(1990,2007),[0]*50,'k-',linewidth=2.)
+ax1.legend(loc='best')
+ax2.legend(loc='best')
+
+df1 = pd.DataFrame({'employee': ['Bob', 'Jake', 'Lisa', 'Sue','Molly'],
+                    'group': ['Accounting', 'Engineering', 'Engineering', 'HR','Baby']})
+df2 = pd.DataFrame({'employee': ['Lisa', 'Bob', 'Jake', 'Sue'],
+                    'hire_date': [2004, 2008, 2012, 2014]})
+
+
 '''
 
 load_grd_data = False

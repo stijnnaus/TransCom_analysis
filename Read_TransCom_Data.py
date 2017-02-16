@@ -13,6 +13,7 @@ import matplotlib.pylab as plt
 from netCDF4 import Dataset
 import time
 import pandas as pd
+import seaborn as sns
 
 def grid_yav(data):
     ''' From monthly global grid data, computes yearly averages for MCF and CH4 '''
@@ -75,109 +76,54 @@ def read_grid_data(direc):
             ar.append(array(ari))
     return array(ar)
 
-def read_stat_data(direc,sty,edy,stations='All'):
+def read_stat_data2(direc, stations):
     '''
-    Returns the station data: CH4(ctl) and MCF mixing ratios at the specified
-    stations.
+    Reads in all station files. 
+    Input:
+     - direc: The directory containing the station files
+     - stations: The stations that need to be read
+    Output: 
+     - A pandas DataFrame, which contains stations as its rows, and measurement
+        instances as its columns. Columns are subdivided in year,month,day,hour.
     '''
-    if stations=='All': stations=range(395)
-    cwd = os.getcwd()
-    indir = os.path.join(cwd,direc)    
-    data_stat = []
+    cwd        = os.getcwd()
+    indir      = os.path.join(cwd,direc)
+    stat_nos   = array(stat_pars.loc[stations,'Index'].astype('int'))
+    id_hr      = np.arange(1,25)
     for root,dirs,filenames in os.walk(indir):
         for i,f in enumerate(filenames):
-            fi = os.path.join(root,f)
-            data = xar.open_dataset(fi)
-            yr,mo = unpack_hdf(data)
-            mcf = np.swapaxes(data['mcf_grd'].values,0,1)[stations]
-            ch4 = np.swapaxes(data['ch4ctl_grd'].values,0,1)[stations]
-            data_stat.append([yr,mo,ch4,mcf])
-    data_srt = sort_stat(data_stat) # sort data by year and month
-    yrs,data_sel = select_time(data_srt,sty,edy) # select the relevant years
-    ch4,mcf = stat_reform2(data_sel) # shape it in the good shape
-    return yrs,ch4,mcf
-
-def sort_stat(data):
-    '''
-    Sort station data according to year and month.
-    This is somewhat complicated because station data is not rectangular and
-    thus not a numpy array.
-    '''
-    yrs = array([item[0] for item in data])
-    mos = array([item[1] for item in data])
-    keys_srt = np.lexsort((mos,yrs))
-    data_srt = []
-    for key in keys_srt:
-        data_srt.append(data[key])
-    return data_srt
+            fi    = os.path.join(root,f) # locate file
+            data  = xar.open_dataset(fi) # open file
+            yr,mo = unpack_hdf(data)     # year/month of file
+            ch4   = np.swapaxes(data['ch4ctl_grd'].values,0,1)[stat_nos]
+            mcf   = np.swapaxes(data['mcf_grd'].values,0,1)[stat_nos]
+            nms   = ch4.shape[1]
+            colum = make_pdindex(yr,mo,nms,id_hr)
+            ch4_sti = pd.DataFrame(ch4, index=stations, columns=colum)
+            mcf_sti = pd.DataFrame(mcf, index=stations, columns=colum)
+            if i == 0:
+                ch4_sta = ch4_sti
+                mcf_sta = mcf_sti
+            else:
+                ch4_sta = ch4_sta.join(ch4_sti)
+                mcf_sta = mcf_sta.join(ch4_sti)
+    return ch4_sta.sort_index(),mcf_sta.sort_index()
     
-def select_time(data, sty, edy):
+def make_pdindex(yr,mo,nms,id_hr):
     '''
-    Select a time period for the sorted station dataset
-    Returns selected data, but also divides the data in bricks of 1 year each.
+    Makes a panda index for a given month.
+    Input:
+    - yr : Year of interest
+    - mo : Month of interest
+    - nms: Number of measurements in the month of interest.
+    - id_hr: The index of hours per day (simply np.arange(1,25))
+    Output:
+    - A pandas multi-index with a level for the year, month and hour
     '''
-    cyr = sty
-    data_ful = []
-    datay = []
-    for item in data:
-        yr,mo = item[0],item[1]
-        if yr<sty: continue
-        if yr>cyr:
-            if len(datay)!=12: print cyr, 'does not have 12 months'
-            cyr=yr
-            data_ful.append(datay)
-            datay = []
-        datay.append(array(item[2:4]))
-        if yr>edy: break
-    yrs = np.arange(sty,edy+1)
-    return yrs,data_ful
-
-def stat_reform(data):
-    '''
-    This function takes the sorted, selected array and groups the data in groups
-    of 1 year. The monthly distinction is removed.
-    Output is: data[ch4(0),mcf(1)][istation][iyear][imonth][imeas]
-    '''
-    ch4_tot,mcf_tot = [],[] # all data from all stations
-    nst = len(data[0][0][0])
-    for ist in range(nst):
-        ch4_st = []; mcf_st = [] # all data from 1 station
-        for iy, datay in enumerate(data):
-            ch4y_st = []; mcfy_st = [] # 1 year data from 1 station
-            for im, datam in enumerate(datay):
-                ch4i_st = datam[0][ist]; mcfi_st = datam[1][ist] # 1 month of data from 1 station
-                ch4y_st.append(array(ch4i_st))
-                mcfy_st.append(array(mcfi_st))
-            ch4_st.append(array(ch4y_st))
-            mcf_st.append(array(mcfy_st))
-        ch4_tot.append(array(ch4_st))
-        mcf_tot.append(array(mcf_st))
-        #datar.append([ch4_st,mcf_st]) if you want [ist][mcf/ch4] instead of [mcf/ch4][ist]
-    return array([array(ch4_tot),array(mcf_tot)])
-
-def stat_reform2(data):
-    '''
-    This function takes the sorted, selected array and groups the data in groups
-    of 1 year. The monthly distinction is removed.
-    Output is: ch4,mcf[istation][iyear][imeas]
-    '''
-    ch4_tot,mcf_tot = [],[] # all data from all stations
-    nst = len(data[0][0][0])
-    for ist in range(nst):
-        ch4_st = []; mcf_st = [] # all data from 1 station
-        for iy, datay in enumerate(data):
-            ch4_sty = []; mcf_sty = [] # 1 year from 1 station
-            for im,datam in enumerate(datay):
-                nd = len(datam[0][ist])
-                for di in range(nd):
-                    ch4_sty.append(datay[im][0][ist][di]) # 1 meas
-                    mcf_sty.append(datay[im][1][ist][di])
-            ch4_st.append(array(ch4_sty[:8760])) 
-            mcf_st.append(array(mcf_sty[:8760]))
-        ch4_tot.append(array(ch4_st))
-        mcf_tot.append(array(mcf_st))
-    return array(ch4_tot), array(mcf_tot)
-
+    id_dy   = np.arange(nms/24.)
+    colum_t = pd.MultiIndex.from_product([[yr],[mo],id_dy,id_hr], names=['Year','Month','Day','Hour'])
+    return colum_t
+    
 def unpack_hdf(data):
     ''' 
     Uses the name of the HDF source of a nc station dataset to find out the 
@@ -217,22 +163,32 @@ def load_txt(f):
         data.append(line.split()[0].upper())
     return data
 
-def select_unique(l):
-    ''' Select the unique elements in a list '''
-    lu = []
-    for e in l:
-        if e not in lu:
-            lu.append(e)
-    return lu
+def find_box(lat, box_edges):
+    '''
+    Input:
+    - lati     : Latitude of a given station
+    - box_edges: The latitudinal edges of the intended box distribution
+    Output:
+    - box_no   : The box number the station should be placed in
+    '''
+    box_no = None
+    n_edge = len(box_edges)
+    for j in range(n_edge):
+        if lati >= box_edges[j] and lati < box_edges[j+1]: 
+            box_no = j
+    if box_no == None: 
+        print 'No box number found for the station with latitude:',lat
+    return box_no
+    
 
-read_grid = True
+read_grid = False
 read_stat = True
 sty,edy = 1990,2006
 
 # ++++ Create a station dictionary
 file_ex = os.getcwd()+'\\TransCom data\\Stat data\\station_file_002.nc' # example data file for station information
 stat_datex = Dataset(file_ex, 'r')
-stat_ids = np.array(stat_datex.station_ident.split())
+stat_ids = np.array(stat_datex.station_ident.split()) # station abbreviations
 stat_lon = stat_datex.station_lon
 stat_lat = stat_datex.station_lat
 stat_elev = stat_datex.station_height
@@ -245,28 +201,34 @@ ar1, ar2, ar3 = 0.5, 0.5*np.sqrt(3) - 0.5, 1 - 0.5*np.sqrt(3)
 w_noaa = [ar3, ar2, ar1, ar1, ar2, ar3] # Weights per box based on area per box
 w_gage = [.25, .25, .25, .25]
 
-# Making a station dictionary, so that info from each station can be requested
-stat_dic = {}
-stat_dic['Description'] = ['Longitude', 'Latitude', 'Elevation','Box Number']
+# Making a station pandaframe, so that info from each station can be requested
+stat_pars = ['Lon', 'Lat', 'Elev','Box_NOAA','Box_AGAGE','Index']  # station parameters
+nst_pars  = len(stat_pars)
+stat_uni  = np.unique(stat_ids); nst_u = len(stat_uni) # unique station ids
+stat_ind = pd.Index(stat_uni, name='Station')
+stat_col = pd.Index(stat_pars,name='Parameter')
+stat_pars = pd.DataFrame(np.zeros((nst_u,nst_pars)), index=stat_ind, columns=stat_col)
+passed = []
 for i,sid in enumerate(stat_ids):
-    if sid in stat_dic.keys(): continue # No duplicates
-    boxno_noaa = None; box_gage = None
-    loni = stat_lon[i]
-    lati = stat_lat[i]
+    if sid in passed: continue; passed.append(sid) # No duplicates
+    index = i
+    loni  = stat_lon[i]
+    lati  = stat_lat[i]
     elevi = stat_elev[i]
-    for j in range(nbox_noaa):
-        if lati >= boxes_noaa[j] and lati < boxes_noaa[j+1]: boxno_noaa = j
-    for j in range(nbox_gage):
-        if lati >= boxes_gage[j] and lati < boxes_gage[j+1]: boxno_gage = j
-    if boxno_noaa == None: print sid, 'has no noaa box'
-    if boxno_gage == None: print sid, 'has no agage box'
-    stat_dic[sid] = [loni, lati, elevi, boxno_gage, boxno_noaa]
-
-stations_agage = load_txt('Stations AGAGE.txt')
-stations_noaa_mcf = load_txt('Stations NOAA MCF.txt')
-stations_noaa_ch4 = load_txt('Stations NOAA CH4.txt')
-stations_all = select_unique(stations_agage+stations_noaa_mcf+stations_noaa_ch4)
-stat_nos = [stat_ids.tolist().index(stat) for stat in stations_all]
+    box_noaa = find_box(lati, boxes_noaa)
+    box_gage = find_box(lati, boxes_gage)
+    stat_pars.loc[sid,'Lon']       = loni     # longitude
+    stat_pars.loc[sid,'Lat']       = lati     # latitude
+    stat_pars.loc[sid,'Elev']      = elevi    # elevation
+    stat_pars.loc[sid,'Box_NOAA']  = box_noaa # noaa box number
+    stat_pars.loc[sid,'Box_AGAGE'] = box_gage # agage box number
+    stat_pars.loc[sid,'Index']     = index    # index in the station data
+# stations in the NOAA and AGAGE network
+sid_agage    = load_txt('Stations AGAGE.txt')
+sid_noaa_mcf = load_txt('Stations NOAA MCF.txt')
+sid_noaa_ch4 = load_txt('Stations NOAA CH4.txt')
+sid_all      = np.unique(sid_agage+sid_noaa_mcf+sid_noaa_ch4)
+stat_nos     = array(stat_pars.loc[sid_all,'Index'].astype('int'))
 
 # Grid data
 if read_grid:
@@ -284,9 +246,9 @@ if read_stat:
     dirc2 = 'TransCom data\Stat data'
     print 'Reading station data ..........'
     start = time.time()
-    yrs,ch4_st,mcf_st = read_stat_data(dirc2,sty,edy,stations=stat_nos) # station data
-    ch4_st*=1e6
-    mcf_st*=1e9
+    yrs,ch4_st,mcf_st = read_stat_data2(dirc2,stations=sid_all) # station data
+    ch4_st*=1e9
+    mcf_st*=1e12
     end = time.time()
     print 'Reading the stat data took',end-start,'seconds'
 
