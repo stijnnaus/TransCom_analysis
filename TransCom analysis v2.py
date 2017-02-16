@@ -275,14 +275,16 @@ def filterStationData2(data,nsd=2.5,ws=100):
     return mask_tot.reshape((nst,nyr,nmsy))
 
 ws = 50
-ch4_mask = filterStationData2(ch4_st,ws=ws)
-ch4_maski = np.invert(ch4_mask)
-ch4_maskf = ch4_mask[0].flatten()
-ch4_maskp = array(np.split(ch4_maskf,12*17))
-ch4_maskmm = np.mean(ch4_maskp,axis=1)
-ch4_maskym = np.mean(ch4_maskf.reshape(17,12*730), axis=1)
-yrs = np.linspace(1990,2006,num=17)
+ch4_mask = filterStationData2(ch4_st,ws=ws)                       # original mask
+ch4_maski = np.invert(ch4_mask)                                   # inverted mask
+ch4_maskf = ch4_mask[0].flatten()                                 # flattened mask
+ch4_maskp = array(np.split(ch4_maskf,12*17))                      # mask partitioned in months
+ch4_maskmm = np.mean(ch4_maskp,axis=1)                            # monthly mean mask
+ch4_maskym = np.mean(ch4_maskf.reshape(17*4,3*730), axis=1)       # 3-monthly mean mask
+yrs = np.linspace(1990,2006,num=17*4)
 mos = np.linspace(1990,2006,num=len(ch4_maskmm))
+ch4_stf = ch4_st.copy()
+ch4_stf[ch4_maski] = np.nan # filtered ch4 station data
 
 plt.figure()
 plt.title('density of polluted data')
@@ -292,17 +294,21 @@ plt.plot(yrs,100-ch4_maskym*100,'-',label = 'yearly '+str(ws),linewidth=2.)
 plt.legend(loc='best')
 
 # setting up pandas
-id_st = stations_all
+id_st = pd.Index(stations_all,name='Station')
 id_y = np.arange(1990,2007)
 id_ms = np.arange(1,8761)
 id_time = pd.MultiIndex.from_product([id_y,id_ms],names=['Year', 'Hour'])
-ch4_pn = ch4_st.reshape((12,17*8760))
+ch4_pn = ch4_stf.reshape((12,17*8760))
 #ch4_st[ch4_maski] = 'NaN'
-ch4_stp = pd.DataFrame(ch4_pn, index=[id_st], columns=[id_time]).sort_index()
+ch4_stp = pd.DataFrame(ch4_pn, index=id_st, columns=id_time).sort_index()
+ch4_stp_ip = ch4_stp.interpolate(method='linear',axis=1)
 
-            
+plt.figure()
+for st in stations_all:
+    plt.plot(ch4_stp_ip.loc[st].values,'o',label=st)
+plt.legend(loc='best')
     
-    
+'''
 
 load_grd_data = False
 load_station_data = False
@@ -367,7 +373,6 @@ plt.savefig('TransCom_Montzka_stations.png')
 
 
 
-'''
 real_data = genMeas(stat_ref, fmeas, mon_nos) # select relevant station data
 prt_data = pertData(real_data, 2., 2.) # perturb the data
 

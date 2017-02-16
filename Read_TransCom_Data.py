@@ -91,7 +91,7 @@ def read_stat_data(direc,sty,edy,stations='All'):
             yr,mo = unpack_hdf(data)
             mcf = np.swapaxes(data['mcf_grd'].values,0,1)[stations]
             ch4 = np.swapaxes(data['ch4ctl_grd'].values,0,1)[stations]
-            data_stat.append([yr,mo,mcf,ch4])
+            data_stat.append([yr,mo,ch4,mcf])
     data_srt = sort_stat(data_stat) # sort data by year and month
     yrs,data_sel = select_time(data_srt,sty,edy) # select the relevant years
     ch4,mcf = stat_reform2(data_sel) # shape it in the good shape
@@ -285,6 +285,8 @@ if read_stat:
     print 'Reading station data ..........'
     start = time.time()
     yrs,ch4_st,mcf_st = read_stat_data(dirc2,sty,edy,stations=stat_nos) # station data
+    ch4_st*=1e6
+    mcf_st*=1e9
     end = time.time()
     print 'Reading the stat data took',end-start,'seconds'
 
