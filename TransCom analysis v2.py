@@ -186,68 +186,12 @@ def genMeas_AGAGE(data,freq,stat_ids):
     mcfgen = genMCF_AGAGE(mcfsel,freq)
     ch4gen = genCH4_AGAGE(ch4sel,freq)
     return array([ch4gen,mcfgen])
-<<<<<<< HEAD
     
+            
 def filterStationData(data,nsd=2.5,ws=100):
     '''
-    This routine is designed to filter out the polluted data from the full 
-    station data.
-    The filtering method is adopted from AGAGE. It selects a window with a
-    width of 4 months. Then it iteratively removes all values more than nsd
-    standard deviations above the median of the window, until no more data
-    is removed.
-=======
-
-<<<<<<< HEAD
-=======
-def filterStationData(data,nsd=2.5):
-    '''
-    Discards data points that are polluted, according to the AGAGE statistical
-    filter: Iteratively remove all data points more than nsd SD above the 
-    median of a 4-month window until no more remain.
-    
-    Data should be EITHER CH4 OR MCF data!
-    '''
-    if len(data)==2: return '!!You are probably trying to filter MCF and CH4 smltsly!!'
-    nw = 4 # width of the averaging window in months
-    nst = len(data) # number of stations
-    nyr = len(data[0]) # number of years
-    nmo = 12*nyr # total number of months
-    data_rsh = data.reshape((nst,nmo))
-    for ist in range(nst):
-        data_st = data_rsh[ist] # all data of 1 station
-        for iw in range(0,nmo-nw):
-            cont = True # becomes false if all remaining data is within nsd SD
-            data_w = data_st[iw:iw+nw]
-            while cont:
-                data_wc = np.copy(data_w) # immutable copy of data_w
-                nms = [len(data_wc[i]) for i in range(nw)] # number of meas per month
-                data_flt = flat(data_wc)
-                med = np.median(data_flt)
-                sd = np.std(data_flt)
-                maxm = med + nsd * sd # maximum cut-off of the model
-                nrm = 0 # number of values that have been removed
-                for imo in range(nw):
-                    for ims in range(nms[imo]):
-                        val = data_wc[imo][ims]
-                        if val > maxm:
-                            data_w[imo].remove(val) # it is now also removed from data_st and data_rsh!
-                            nrm += 1
-                if nrm == 0: cont = False
-    data_or = data_rsh.reshape((nst,nyr,nmo)) # original data shape
-    return data_or
-    
-            
-            
->>>>>>> parent of 3c988c8... Finished filter
-def flat(data):
-    '''
     Return the flattened array of data, which consists of 1d lists
-    '''
-    return array([data[i][j] for j in range(len(data[i])) for i in range(len(data))])
->>>>>>> master
-    
-<<<<<<< HEAD
+
     data: Either MCF or CH4 data.
     nsd : Number of STD above which a value is considered polluted.
     ws  : Window spacing, i.e. how many data points the window jumps after 
@@ -288,29 +232,7 @@ def filterStationData_df(df,nsd=2.5,ws=100):
     
     ---!!! NOT IMPLEMENTED !!!
     '''
-    nst,nms = df.shape
-    nmsy = hpy
-    nyr  = nms / nmsy
-    nw   = 4*nmsy/12 # 4-month filtering window
-    mask_tot = np.ones((nst,nms),dtype='bool')
-    for ist,data_st in enumerate(data):
-        data_fl = data_st.flatten() # flattened data for all years
-        mask_st = mask_tot[ist]
-        for st in range(0,nms-nw+1,ws):
-            ed = st+nw # end of the window
-            mask_w = mask_st[st:ed]
-            data_w = data_fl[st:ed]
-            ch = True
-            while ch: # continue iterating as long as there are changes
-                med            = np.median(data_w[mask_w])   # median
-                sd             = np.std(data_w[mask_w])      # standard deviation
-                cond           = data_w[mask_w] < med+2.5*sd # check filtering condition
-                if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
-                    ch = False
-                mask_w[mask_w] = cond # implement changes
-            mask_st[st:ed] = mask_w
-        print ist
-    return mask_tot.reshape((nst,nyr,nmsy))
+    pass
     
 def filterStationData2(data,nsd=2.5,ws=100):
     '''
@@ -335,7 +257,7 @@ def filterStationData2(data,nsd=2.5,ws=100):
     for ist,data_st in enumerate(data):
         for st in range(0,nms+ws,ws):
             ed = st + nw
-            data_fw = data_f.loc[[st:ed] # window
+            data_fw = data_f.loc[st:ed] # window
             while ch: # continue iterating as long as there are changes
                 med  = np.median(data_w[mask_w])   # median
                 sd   = np.std(data_w[mask_w])      # standard deviation
@@ -346,46 +268,19 @@ def filterStationData2(data,nsd=2.5,ws=100):
             mask_st[st:ed] = mask_w
     return mask_tot.reshape((nst,nyr,nmsy))
 
-<<<<<<< HEAD
 ws = 100
 ch4_mask = filterStationData(ch4_st,ws=ws,nsd=2.5) # original mask
 
 ch4_maski  = np.invert(ch4_mask)                            # inverted mask
 ch4_maskf  = ch4_mask[0].flatten()                          # flattened mask
 ch4_maskp  = array(np.split(ch4_maskf,12*17))               # mask partitioned in months
-=======
-ws = 50
-<<<<<<< HEAD
-<<<<<<< HEAD
-ch4_mask = filterStationData2(ch4_st,ws=ws,nsd=2.5)         # original mask
-ch4_maski = np.invert(ch4_mask)                             # inverted mask
-ch4_maskf = ch4_mask[0].flatten()                           # flattened mask
-ch4_maskp = array(np.split(ch4_maskf,12*17))                # mask partitioned in months
->>>>>>> master
 ch4_maskmm = np.mean(ch4_maskp,axis=1)                      # monthly mean mask
 ch4_maskym = np.mean(ch4_maskf.reshape(17*4,3*730), axis=1) # 3-monthly mean mask
 yrs = np.linspace(1990,2006,num=17*4)
-=======
-=======
->>>>>>> parent of bd9f3f4... pandas is working
-ch4_mask = filterStationData2(ch4_st,ws=ws)
-ch4_maski = np.invert(ch4_mask)
-ch4_maskf = ch4_mask[0].flatten()
-ch4_maskp = array(np.split(ch4_maskf,12*17))
-ch4_maskmm = np.mean(ch4_maskp,axis=1)
-ch4_maskym = np.mean(ch4_maskf.reshape(17,12*730), axis=1)
-yrs = np.linspace(1990,2006,num=17)
-<<<<<<< HEAD
->>>>>>> parent of bd9f3f4... pandas is working
-=======
->>>>>>> parent of bd9f3f4... pandas is working
 mos = np.linspace(1990,2006,num=len(ch4_maskmm))
-<<<<<<< HEAD
 
 ch4_stf = ch4_st.copy()
 ch4_stf[ch4_maski] = np.nan # filtered ch4 station data
-=======
->>>>>>> master
 
 plt.figure()
 plt.title('density of polluted data')
@@ -395,23 +290,19 @@ plt.plot(yrs,100-ch4_maskym*100,'-',label = 'yearly '+str(ws),linewidth=2.)
 plt.legend(loc='best')
 
 # setting up pandas
-<<<<<<< HEAD
 ch4_stfp    = make_pandas(ch4_stf,1990,2006,sid_all) # filtered pandas dataframe
 ch4_stfp_ip = ch4_stfp.interpolate(method='linear',axis=1) # interpolated
 ch4_stf_mn = ch4_stfp_ip.mean(axis=1,level=0) # yearly average filtered
 ch4_st_mn  = ch4_stp.mean(axis=1,level=0)      # yearly average unfiltered
-=======
+
 id_st = stations_all
 id_y = np.arange(1990,2007)
 id_ms = np.arange(1,8761)
 id_time = pd.MultiIndex.from_product([id_y,id_ms],names=['Year', 'Hour'])
-<<<<<<< HEAD
-<<<<<<< HEAD
 ch4_pn = ch4_stf.reshape((12,17*8760))
 ch4_stp = pd.DataFrame(ch4_pn, index=id_st, columns=id_time).sort_index()
 ch4_stp_ip = ch4_stp.interpolate(method='linear',axis=1) # interpolated
 ch4_st_mn = ch4_stp_ip.mean(axis=1,level=0)
->>>>>>> master
 
 colors = ['steelblue','maroon','blue','red',      'cyan',   'magenta',\
             'black',  'green', 'lime','peachpuff','fuchsia','silver']
@@ -454,8 +345,6 @@ dif_uf = grav_ch4 - ch4_agage_uf_gmn
 #               NOAA
 
 
-'''
-
 yrs = np.arange(1990,2007)+.5
 fig = plt.figure()
 ax1 = fig.add_subplot(211)
@@ -488,30 +377,7 @@ df2 = pd.DataFrame({'employee': ['Lisa', 'Bob', 'Jake', 'Sue'],
                     'hire_date': [2004, 2008, 2012, 2014]})
 
 
-<<<<<<< HEAD
-=======
 '''
-=======
-ch4_pn = ch4_st.reshape((12,17*8760))
-#ch4_st[ch4_maski] = 'NaN'
-ch4_stp = pd.DataFrame(ch4_pn, index=[id_st], columns=[id_time]).sort_index()
-
-=======
->>>>>>> parent of 3c988c8... Finished filter
-            
-    
-    
->>>>>>> parent of bd9f3f4... pandas is working
-=======
-ch4_pn = ch4_st.reshape((12,17*8760))
-#ch4_st[ch4_maski] = 'NaN'
-ch4_stp = pd.DataFrame(ch4_pn, index=[id_st], columns=[id_time]).sort_index()
-
-            
-    
-    
->>>>>>> parent of bd9f3f4... pandas is working
->>>>>>> master
 
 load_grd_data = False
 load_station_data = False
@@ -576,7 +442,6 @@ plt.savefig('TransCom_Montzka_stations.png')
 
 
 
-'''
 real_data = genMeas(stat_ref, fmeas, mon_nos) # select relevant station data
 prt_data = pertData(real_data, 2., 2.) # perturb the data
 
