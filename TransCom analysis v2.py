@@ -223,16 +223,48 @@ def filterStationData(data,nsd=2.5,ws=100):
                     ch = False
                 mask_w[mask_w] = cond # implement changes
             mask_st[st:ed] = mask_w
-        print ist
+        print(ist)
     return mask_tot.reshape((nst,nyr,nmsy))
     
-def filterStationData_df(df,nsd=2.5,ws=100):
+def filterStationData_df(df,nsd=2.5,ww=2900,ws=100,stp=30):
     '''
-    Same as filterStationData, only for dataframes.
+    This routine is designed to filter out the polluted data from the full 
+    station data.
+    The filtering method is adopted from AGAGE. It selects a window with a
+    width of 4 months. Then it iteratively removes all values more than nsd
+    standard deviations above the median of the window, until no more data
+    is removed.
     
-    ---!!! NOT IMPLEMENTED !!!
+    df  : Either MCF or CH4 pandas dataframe.
+    nsd : Number of STD above which a value is considered polluted.
+    ww  : Width of window [hours]
+    ws  : Spacing between subsequent windows
+    stp : Stop filtering when iteration filters less than 
+            
+    Returns a boolean mask.
     '''
-    pass
+    nst, nms = df.shape
+    for stat in df.columns:
+        print 'Filtering',stat
+        df_st = df[stat]    # Select a station
+        n_nan = stp+1; n_nan0 = 0; it = 0 # initialization
+        while (n_nan-n_nan0)>stp:    # Stop if little data is removed
+            it+=1
+            n_nan0 = n_nan
+            rol = df_st.rolling(ww,min_periods=0)   # rolling window (width~4 months)
+            limit = (rol.median() + nsd*rol.std()) # pollution limit per window
+            limit = limit[ww:].dropna()
+            nwd   = len(limit)   # number of windows
+            vls_w = limit.values # limits set by window
+            for i in range(0,nwd,ws): # loop over windows
+                df_w = df_st[i:i+ww]   # select window
+                df_w[df_w>vls_w[i]] = np.nan # check condition
+            n_nan = df_st.isnull().sum() # number of filtered values
+            print 'Iteration:',it,', number filtered:',n_nan,n_nan0
+    return df
+                
+                
+            
     
 def filterStationData2(data,nsd=2.5,ws=100):
     '''
@@ -393,22 +425,22 @@ mcfe = 2.
 if load_grd_data:
     nx,ny,nz = 60,45,25
     dirc = 'TransCom data\Grid data'
-    print 'Reading grid data .........'
+    print('Reading grid data .........')
     start = time.time()
     grid_data = read_grid_data(dirc)
     end = time.time()
-    print 'Reading the grid data took', end-start, 'seconds'
+    print('Reading the grid data took', end-start, 'seconds')
     grid_y = grid_yav(grid_data)
 
 if load_station_data:
     dirc2 = 'TransCom data\Stat data'
-    print 'Reading station data ..........'
+    print('Reading station data ..........')
     start = time.time()
     stat_data = read_stat_data(dirc2) # raw station data
     yrs,stat_sel = select_time(stat_data,sty,edy) # data for selected years
     station_data = stat_reform(stat_sel) # final station data
     end = time.time()
-    print 'Reading the stat data took',end-start,'seconds'
+    print('Reading the stat data took',end-start,'seconds')
 
 
 
