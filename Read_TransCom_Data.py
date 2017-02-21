@@ -13,7 +13,6 @@ import matplotlib.pylab as plt
 from netCDF4 import Dataset
 import time
 import pandas as pd
-import seaborn as sns
 
 def grid_yav(data):
     ''' From monthly global grid data, computes yearly averages for MCF and CH4 '''
@@ -76,62 +75,172 @@ def read_grid_data(direc):
             ar.append(array(ari))
     return array(ar)
 
-def read_stat_data2(direc, stations):
+def read_stat_data(direc,sty,edy,stations):
     '''
-    Reads in all station files. 
+    Returns the station data: CH4(ctl) and MCF mixing ratios at the specified
+    stations.
     Input:
-     - direc: The directory containing the station files
-     - stations: The stations that need to be read
-    Output: 
-     - A pandas DataFrame, which contains stations as its rows, and measurement
-        instances as its columns. Columns are subdivided in year,month,day,hour.
-    '''
-    cwd        = os.getcwd()
-    indir      = os.path.join(cwd,direc)
-    stat_nos   = array(stat_pars.loc[stations,'Index'].astype('int'))
-    id_hr      = np.arange(1,25)
-    for root,dirs,filenames in os.walk(indir):
-        for i,f in enumerate(filenames):
-            fi    = os.path.join(root,f) # locate file
-            data  = xar.open_dataset(fi) # open file
-            yr,mo = unpack_hdf(data)     # year/month of file
-            ch4   = np.swapaxes(data['ch4ctl_grd'].values,0,1)[stat_nos]
-            mcf   = np.swapaxes(data['mcf_grd'].values,0,1)[stat_nos]
-            nms   = ch4.shape[1]
-            colum = make_pdindex(yr,mo,nms,id_hr)
-            ch4_sti = pd.DataFrame(ch4, index=stations, columns=colum)
-            mcf_sti = pd.DataFrame(mcf, index=stations, columns=colum)
-            if i == 0:
-                ch4_sta = ch4_sti
-                mcf_sta = mcf_sti
-            else:
-                ch4_sta = ch4_sta.join(ch4_sti)
-                mcf_sta = mcf_sta.join(ch4_sti)
-    return ch4_sta.sort_index(),mcf_sta.sort_index()
-    
-def make_pdindex(yr,mo,nms,id_hr):
-    '''
-    Makes a panda index for a given month.
-    Input:
-    - yr : Year of interest
-    - mo : Month of interest
-    - nms: Number of measurements in the month of interest.
-    - id_hr: The index of hours per day (simply np.arange(1,25))
+     - direc  : The directory that contains files with station data per month
+     - sty,edy: First,last year to be included
+     - stations: The stations for which data is to be retrieved
     Output:
-    - A pandas multi-index with a level for the year, month and hour
+     - ch4: An array containing the CH4 data. Shape is (nstations, nyear, nhour)
+     - mcf: Same, but for MCF data.
+    NOTE: The routine ensures that the data arrays are square: in leap years,
+        the last day of the year is dropped (for memory efficiency)
     '''
-    id_dy   = np.arange(nms/24.)
-    colum_t = pd.MultiIndex.from_product([[yr],[mo],id_dy,id_hr], names=['Year','Month','Day','Hour'])
-    return colum_t
+    cwd = os.getcwd()
+    indir = os.path.join(cwd,direc)    
+    data_stat = []
+    stat_nos   = array(stat_pars.loc[stations,'Index'].astype('int'))
+    for root,dirs,filenames in os.walk(indir):
+        for i,f in enumerate(filenames): # reading in the unsorted data files
+            fi    = os.path.join(root,f)
+            data  = xar.open_dataset(fi)
+            yr,mo = unpack_hdf(data)
+            mcf   = np.swapaxes(data['mcf_grd'].values,0,1)[stat_nos]
+            ch4   = np.swapaxes(data['ch4ctl_grd'].values,0,1)[stat_nos]
+            data_stat.append([yr,mo,ch4,mcf])
+    data_srt = sort_stat(data_stat) # sort data by year and month
+    data_sel = select_time(data_srt,sty,edy) # select the relevant years
+    ch4,mcf  = stat_reshape(data_sel)
+    return ch4, mcf
     
+def read_stat_data_df(direc,sty,edy,stations):
+    '''
+    Returns the station data: CH4(ctl) and MCF mixing ratios at the specified
+    stations.
+    Input:
+     - direc  : The directory that contains files with station data per month
+     - sty,edy: First,last year to be included
+     - stations: The stations for which data is to be retrieved
+    Output:
+      - ch4: A pandas dateframe with a datestamp as index and the stations as
+          columns
+    '''
+    cwd = os.getcwd()
+    indir = os.path.join(cwd,direc)    
+    date_id = pd.date_range(sty,edy)
+    df_ch4 = pd.DataFrame(columns=stations)
+    df_mcf = pd.DataFrame(columns=stations)
+    stat_nos = array(stat_pars.loc[stations,'Index'].astype('int'))
+    for root,dirs,filenames in os.walk(indir):
+        for i,f in enumerate(filenames): # reading in the station data files
+            fi    = os.path.join(root,f)
+            data  = xar.open_dataset(fi)
+            yr,mo = unpack_hdf(data, as_pd=True) # year,month corresponding to data
+            if yr<sty | yr>edy: continue
+            id_date = pd_
+            ch4 = data['ch4ctl_grd'].values[stat_nos]
+            mcf = data['mcf_grd'].values[stat_nos]
+            df_ch4.loc[id_date, stations] = ch4
+            df_mcf.loc[id_date, stations] = mcf
+    return df_ch4, df_mcf
+
+def sort_stat(data):
+    '''
+    Sort station data according to year and month.
+    This is somewhat complicated because station data is not rectangular and
+    thus not a numpy array.
+    '''
+    yrs = array([item[0] for item in data])
+    mos = array([item[1] for item in data])
+    keys_srt = np.lexsort((mos,yrs))
+    data_srt = []
+    for key in keys_srt:
+        data_srt.append(data[key])
+    return data_srt
+    
+def make_dataframe(ch4,mcf,sty,edy,stations):
+    '''
+    Makes a pandas data frame from data under very specific conditions.
+    Input:
+     - ch4,mcf : the data
+     - sty,edy : start year and end year
+     - stations: station identification tags
+    Returns:
+     - Dataframe
+    '''
+    ch4f,mcff = ch4.flatten(),mcf.flatten()
+    nyr = edy-sty+1
+    nst = len(stations)
+    col_st = np.repeat(stations,nyr*hpy)
+    col_yr = np.tile(np.repeat(np.arange(sty,edy+1),hpy),nst)
+    col_mo = np.tile(np.repeat(np.arange(0,12),hpm), nst*nyr)
+    col_hr = np.tile(np.arange(0,hpm), nst*nyr*12)
+    print col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape
+    datat = np.column_stack((col_st,col_yr,col_mo,col_hr,ch4f,mcff))
+    colum = pd.Index(['station','year','month','hour','ch4','mcf'])
+    df    = pd.DataFrame(datat, columns=colum)
+    df[['year','month','hour','ch4','mcf']] = df[['year','month','hour','ch4','mcf']].apply(pd.to_numeric)
+    return df
+     
+def select_time(data, sty, edy):
+    '''
+    Select a time period for the sorted station dataset
+    Returns selected data, but also divides the data in bricks of 1 year each.
+    '''
+    cyr = sty
+    data_ful = []
+    datay = []
+    for item in data:
+        yr,mo = item[0],item[1]
+        if yr<sty: continue
+        if yr>cyr:
+            if len(datay)!=12: print cyr, 'does not have 12 months'
+            cyr=yr
+            data_ful.append(datay)
+            datay = []
+        datay.append(array(item[2:4]))
+        if yr>edy: break
+    return data_ful
+
+def stat_reshape(data):
+    '''
+    This function takes the sorted, selected array and groups the data in groups
+    of 1 year. The monthly distinction is removed.
+    Output is: ch4,mcf[istation][iyear][imeas]
+    '''
+    ch4_tot,mcf_tot = [],[] # all data from all stations
+    nst = len(data[0][0][0])
+    for ist in range(nst):
+        ch4_st = []; mcf_st = [] # all data from 1 station
+        for iy, datay in enumerate(data):
+            ch4_sty = []; mcf_sty = [] # 1 year from 1 station
+            for im,datam in enumerate(datay):
+                nd = len(datam[0][ist])
+                for di in range(nd):
+                    ch4_sty.append(datay[im][0][ist][di]) # 1 meas
+                    mcf_sty.append(datay[im][1][ist][di])
+            ch4_st.append(array(ch4_sty[:8760])) 
+            mcf_st.append(array(mcf_sty[:8760]))
+        ch4_tot.append(array(ch4_st))
+        mcf_tot.append(array(mcf_st))
+    return array(ch4_tot), array(mcf_tot)
+
 def unpack_hdf(data):
     ''' 
     Uses the name of the HDF source of a nc station dataset to find out the 
     year & month the data corresponds to
+    
+    Returns 2 ints: year and month
     '''
     name = data.hdf_source
     yr,mo = int(name[8:12]), int(name[12:14])
-    return yr,mo
+    return int(yr), int(mo)
+
+def pd_splitmonth(yr,mo,frq='H'):
+    '''
+    For a given month, it is split up into a pandas daterange, with frequency
+    frq.
+    yr,mo: Integers specifying the month
+    '''
+    st_date = str(yr)+str(mo)                   # start date
+    if mo == 12: ed_date = str(yr+1)+str(mo)    # end date (+1 month)
+    else: ed_date = str(yr)+str(mo+1)           # if not the last month
+    st_date,ed_date = pd.to_datetime([st_date,ed_date], format='%Y%m') # convert to pandas
+    dater = pd.date_range(st_date,ed_date, freq=frq, closed='left') # generate the hourly dates
+    return dater
 
 def calc_pfield(at,bt,p0):
     p0r = p0.reshape(1,45,60)
@@ -146,8 +255,8 @@ def tropheight(t):
     below 2 degree C, ie where the troposphere ends
     Returns a mask
     '''
-    tgrad = t[:-1]-t[1:]
-    pheight = np.argmax(tgrad[9:]<=2,axis=0)+10
+    tgr = t[1:]-t[:-1]
+    pheight = np.argmax(tgr[9:]<=2,axis=0)+9
     mask = np.ones(t.shape,dtype='bool')
     for iy,py in enumerate(pheight):
         for ix,px in enumerate(py):
@@ -179,16 +288,18 @@ def find_box(lat, box_edges):
     if box_no == None: 
         print 'No box number found for the station with latitude:',lat
     return box_no
-    
 
 read_grid = False
 read_stat = True
 sty,edy = 1990,2006
+yrs = np.arange(sty,edy+1)
+hpy = 365*24 # hours per year
+hpm = hpy/12
 
 # ++++ Create a station dictionary
 file_ex = os.getcwd()+'\\TransCom data\\Stat data\\station_file_002.nc' # example data file for station information
 stat_datex = Dataset(file_ex, 'r')
-stat_ids = np.array(stat_datex.station_ident.split()) # station abbreviations
+stat_ids = np.array(stat_datex.station_ident.split())
 stat_lon = stat_datex.station_lon
 stat_lat = stat_datex.station_lat
 stat_elev = stat_datex.station_height
@@ -246,9 +357,11 @@ if read_stat:
     dirc2 = 'TransCom data\Stat data'
     print 'Reading station data ..........'
     start = time.time()
-    yrs,ch4_st,mcf_st = read_stat_data2(dirc2,stations=sid_all) # station data
+
+    ch4_st,mcf_st = read_stat_data_df(dirc2,sty,edy,sid_all) # station data
     ch4_st*=1e9
     mcf_st*=1e12
+    df_st   = make_dataframe(ch4_st,mcf_st,sty,edy,sid_all)
     end = time.time()
     print 'Reading the stat data took',end-start,'seconds'
 
@@ -267,6 +380,7 @@ ax2.plot(grid_yrs,grid_ch4,'go', label='Monthly mean')
 ax2.plot(grid_y[:,0],grid_y[:,1],'k-',linewidth=4.,label='Global mean')
 ax1.grid(); ax2.grid()
 ax1.legend(loc='best'); ax2.legend(loc='best')
+
 
 m = xar.open_dataset('station_file_002.nc')
 m2 = xar.open_dataset('gridded_data.nc')
