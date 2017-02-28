@@ -20,9 +20,12 @@ import netCDF4 as ncdf
 import random as rnd
 from netCDF4 import Dataset
 from mpl_toolkits.basemap import Basemap
+<<<<<<< HEAD
 import seaborn as sns
 import statsmodels.api as sm
 from scipy.optimize import curve_fit
+=======
+>>>>>>> origin/master
 
 def global_mean(data, stat_nos, stat_error, box_dist, we, nruns=50, random = False):
     '''
@@ -188,12 +191,16 @@ def genMeas_AGAGE(data,freq,stat_ids):
     ch4gen = genCH4_AGAGE(ch4sel,freq)
     return array([ch4gen,mcfgen])
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> origin/master
     
             
 def filterStationData(data,nsd=2.5,ws=100):
     '''
     Return the flattened array of data, which consists of 1d lists
 
+<<<<<<< HEAD
 =======
             
 def filterStationData_ar(data,nsd=2.5,ws=100,curvefit=False,flr=0):
@@ -206,6 +213,8 @@ def filterStationData_ar(data,nsd=2.5,ws=100,curvefit=False,flr=0):
     is removed.
     
 >>>>>>> fullpandas
+=======
+>>>>>>> origin/master
     data: Either MCF or CH4 data.
     nsd : Number of STD above which a value is considered polluted.
     ws  : Window spacing, i.e. how many data points the window jumps after 
@@ -217,8 +226,15 @@ def filterStationData_ar(data,nsd=2.5,ws=100,curvefit=False,flr=0):
     '''
     nst  = len(data)
     nyr  = len(data[0]) # number of years
+<<<<<<< HEAD
     nms  = hpy*nyr # total number of meas
     nw   = 4*hpy/12 # width of the filtering window in hours
+=======
+    nmsy = len(data[0][0]) # number of meas per year
+    nms  = nmsy*nyr # total number of meas
+    nmo  = 12*nyr # total number of months
+    nw   = nmsy/12 # width of the filtering window in hours
+>>>>>>> origin/master
     mask_tot = np.ones((nst,nms),dtype='bool')
     for ist,data_st in enumerate(data):
         data_fl = data_st.flatten() # flattened data for all years
@@ -234,9 +250,15 @@ def filterStationData_ar(data,nsd=2.5,ws=100,curvefit=False,flr=0):
                 data_w = data_w - fit
             ch = True
             while ch: # continue iterating as long as there are changes
+<<<<<<< HEAD
                 med  = np.median(data_w[mask_w])                  # median
                 crit = (nsd*np.std(data_w[mask_w])).clip(min=flr) # standard deviation
                 cond = data_w[mask_w] < med+crit                  # check filtering condition
+=======
+                med            = np.median(data_w[mask_w])   # median
+                sd             = np.std(data_w[mask_w])      # standard deviation
+                cond           = data_w[mask_w] < med+2.5*sd # check filtering condition
+>>>>>>> origin/master
                 if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
                     ch = False
                 mask_w[mask_w] = cond # implement changes
@@ -325,11 +347,92 @@ def filterStationData_df(df,nsd=2.5,ww=2900,stp=0,flr=0):
                     ch = False
                     
             mask_st[st:ed] = mask_w
+        print(ist)
+    return mask_tot.reshape((nst,nyr,nmsy))
+    
+def filterStationData_df(df,nsd=2.5,ww=2900,ws=100,stp=30):
+    '''
+    This routine is designed to filter out the polluted data from the full 
+    station data.
+    The filtering method is adopted from AGAGE. It selects a window with a
+    width of 4 months. Then it iteratively removes all values more than nsd
+    standard deviations above the median of the window, until no more data
+    is removed.
+    
+    df  : Either MCF or CH4 pandas dataframe.
+    nsd : Number of STD above which a value is considered polluted.
+    ww  : Width of window [hours]
+    ws  : Spacing between subsequent windows
+    stp : Stop filtering when iteration filters less than 
+            
+    Returns a boolean mask.
+    '''
+    nst, nms = df.shape
+    for stat in df.columns:
+        print 'Filtering',stat
+        df_st = df[stat]    # Select a station
+        n_nan = stp+1; n_nan0 = 0; it = 0 # initialization
+        while (n_nan-n_nan0)>stp:    # Stop if little data is removed
+            it+=1
+            n_nan0 = n_nan
+            rol = df_st.rolling(ww,min_periods=0)   # rolling window (width~4 months)
+            limit = (rol.median() + nsd*rol.std()) # pollution limit per window
+            limit = limit[ww:].dropna()
+            nwd   = len(limit)   # number of windows
+            vls_w = limit.values # limits set by window
+            for i in range(0,nwd,ws): # loop over windows
+                df_w = df_st[i:i+ww]   # select window
+                df_w[df_w>vls_w[i]] = np.nan # check condition
+            n_nan = df_st.isnull().sum() # number of filtered values
+            print 'Iteration:',it,', number filtered:',n_nan,n_nan0
+    return df
+                
+                
+            
+    
+def filterStationData2(data,nsd=2.5,ws=100):
+    '''
+    This routine is designed to filter out the polluted data from the full 
+    station data.
+    The filtering method is adopted from AGAGE. It selects a window with a
+    width of 4 months. Then it iteratively removes all values more than nsd
+    standard deviations above the median of the window, until no more data
+    is removed.
+    
+    data: Either MCF or CH4 data.
+    nsd : Number of STD above which a value is considered polluted.
+    ws  : Window spacing, i.e. how many data points the window jumps after 
+            finishing each filter.
+            
+    Returns a boolean mask.
+    '''
+    if len(data)==2: return '!!You are probably trying to filter MCF and CH4 smltsly!!'
+    nst,nms = data.shape
+    
+    data_f = data.copy()
+    for ist,data_st in enumerate(data):
+        for st in range(0,nms+ws,ws):
+            ed = st + nw
+            data_fw = data_f.loc[st:ed] # window
+            while ch: # continue iterating as long as there are changes
+                med  = np.median(data_w[mask_w])   # median
+                sd   = np.std(data_w[mask_w])      # standard deviation
+                data_fw[data_fw > med+2.5*sd] = np.nan # check filtering condition
+                if np.all(data_fw == data_f[st:ed]): # no changes since the last iteration
+                    ch = False
+                    
+            mask_st[st:ed] = mask_w
     return mask_tot.reshape((nst,nyr,nmsy))
 
 ws = 100
 ch4_mask = filterStationData(ch4_st,ws=ws,nsd=2.5) # original mask
 
+<<<<<<< HEAD
+ws = 100
+ch4_mask = filterStationData(ch4_st,ws=ws,nsd=2.5) # original mask
+
+=======
+>>>>>>> origin/master
 ch4_maski  = np.invert(ch4_mask)                            # inverted mask
 ch4_maskf  = ch4_mask[0].flatten()                          # flattened mask
 ch4_maskp  = array(np.split(ch4_maskf,12*17))               # mask partitioned in months
@@ -370,6 +473,7 @@ def deseasonalize(series):
     '''
     pass
 
+<<<<<<< HEAD
 def glob_mean_df(df,sids,w,network='NOAA',ip=True):
     '''
     Calculates the global mean from station data
@@ -557,6 +661,26 @@ ax[1].fill_between(np.linspace(1990,2007),
 '''
 colors = ['steelblue','maroon','blue','red',      'cyan',   'magenta',\
             'black',  'green', 'lime','peachpuff','fuchsia','silver']
+=======
+colors = ['steelblue','maroon','blue','red',      'cyan',   'magenta',\
+            'black',  'green', 'lime','peachpuff','fuchsia','silver']
+plt.figure()
+for i,st in enumerate(sid_all):
+    plt.plot(np.arange(1990,2007)+.5,ch4_stf_mn.loc[st].values,'o',color=colors[i],label=st+' filt')
+    plt.plot(np.arange(1990,2007)+.5,ch4_st_mn.loc[st].values,'v', color=colors[i],label=st+' ufilt')
+plt.legend(loc='best')
+>>>>>>> origin/master
+
+filt_e = ch4_stf_mn.values-ch4_st_mn.values
+filt_e_mn = np.mean(filt_e,axis=0)
+filt_e_std = np.mean(filt_e,axis=0)
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.set_xticklabels(sid_all)
+ax1.tick_params(axis = 'x', which = 'both', labelsize = 15)
+for i,st in enumerate(sid_all):
+    ax1.errorbar(np.arange(0,17),filt_e_mn,yerr=filt_e_std,fmt='o')
+ax1.legend(loc='best')
 
 # ++++++++++++++++++++++++++++++++++
 #               AGAGE
