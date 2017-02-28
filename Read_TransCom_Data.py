@@ -19,7 +19,7 @@ def grid_yav(data):
     yrs, mos = data[:,0],data[:,1]
     data = data[np.lexsort((mos,yrs))] # sort by year and then month
     ny = len(data)/12
-    if ny != len(data)/12.: print 'number of months is not a multiple of 12'
+    if ny != len(data)/12.: print('number of months is not a multiple of 12')
     data_resh = data.reshape((ny,12,4)) # reshape so that years are grouped
     yavs = np.zeros((ny,3))
     for i,datai in enumerate(data_resh):
@@ -120,6 +120,7 @@ def read_stat_data_df(direc,sty,edy,stations):
     '''
     cwd = os.getcwd()
     indir = os.path.join(cwd,direc)    
+<<<<<<< HEAD
     date_id = pd.date_range(sty,edy)
     df_ch4 = pd.DataFrame(columns=stations)
     df_mcf = pd.DataFrame(columns=stations)
@@ -135,6 +136,31 @@ def read_stat_data_df(direc,sty,edy,stations):
             mcf = data['mcf_grd'].values[stat_nos]
             df_ch4.loc[id_date, stations] = ch4
             df_mcf.loc[id_date, stations] = mcf
+=======
+    # All hourly date indices from start of start year to end of end year:
+    date_id = pd.date_range(str(sty),str(edy+1), freq='H', closed='left') 
+    df_ch4 = pd.DataFrame(index=date_id,columns=stations) # Set up dataframe for ch4
+    df_mcf = pd.DataFrame(index=date_id,columns=stations) #                      mcf
+    stat_nos = array(stat_pars.loc[stations,'Index'].astype('int'))
+    for root,dirs,filenames in os.walk(indir):
+        for i,f in enumerate(filenames):    # reading in the station data files
+            fi    = os.path.join(root,f)    # Open file
+            data  = xar.open_dataset(fi)    # Load data as xarray
+            yr,mo = unpack_hdf(data)        # year,month corresponding to data
+            if yr<sty or yr>edy: continue   # Enforce time range
+            id_date = pd_splitmonth(yr,mo,frq='H')
+            ch4 = data['ch4ctl_grd'].values[:,stat_nos]
+            mcf = data['mcf_grd'].values[:,stat_nos]
+            try:
+                df_ch4.loc[id_date, stations] = ch4 # Put ch4 data in pandas dataframe
+                df_mcf.loc[id_date, stations] = mcf #     mcf
+            except KeyError,msg:
+                print('ERROR@',yr,mo,id_date)
+                raise KeyError(msg)
+    for st in stations: # convert from objects to floats
+        df_ch4[st] = pd.to_numeric(df_ch4[st])
+        df_mcf[st] = pd.to_numeric(df_mcf[st])
+>>>>>>> fullpandas
     return df_ch4, df_mcf
 
 def sort_stat(data):
@@ -168,7 +194,11 @@ def make_dataframe(ch4,mcf,sty,edy,stations):
     col_yr = np.tile(np.repeat(np.arange(sty,edy+1),hpy),nst)
     col_mo = np.tile(np.repeat(np.arange(0,12),hpm), nst*nyr)
     col_hr = np.tile(np.arange(0,hpm), nst*nyr*12)
+<<<<<<< HEAD
     print col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape
+=======
+    print(col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape)
+>>>>>>> fullpandas
     datat = np.column_stack((col_st,col_yr,col_mo,col_hr,ch4f,mcff))
     colum = pd.Index(['station','year','month','hour','ch4','mcf'])
     df    = pd.DataFrame(datat, columns=colum)
@@ -187,7 +217,7 @@ def select_time(data, sty, edy):
         yr,mo = item[0],item[1]
         if yr<sty: continue
         if yr>cyr:
-            if len(datay)!=12: print cyr, 'does not have 12 months'
+            if len(datay)!=12: print(cyr, 'does not have 12 months')
             cyr=yr
             data_ful.append(datay)
             datay = []
@@ -235,9 +265,17 @@ def pd_splitmonth(yr,mo,frq='H'):
     frq.
     yr,mo: Integers specifying the month
     '''
+<<<<<<< HEAD
     st_date = str(yr)+str(mo)                   # start date
     if mo == 12: ed_date = str(yr+1)+str(mo)    # end date (+1 month)
     else: ed_date = str(yr)+str(mo+1)           # if not the last month
+=======
+    st_date = str(yr)+str(mo)       # start date
+    if mo == 12: 
+        ed_date = str(yr+1)+str(1) # end date (+1 month)
+    else: 
+        ed_date = str(yr)+str(mo+1) # if not the last month
+>>>>>>> fullpandas
     st_date,ed_date = pd.to_datetime([st_date,ed_date], format='%Y%m') # convert to pandas
     dater = pd.date_range(st_date,ed_date, freq=frq, closed='left') # generate the hourly dates
     return dater
@@ -286,7 +324,7 @@ def find_box(lat, box_edges):
         if lati >= box_edges[j] and lati < box_edges[j+1]: 
             box_no = j
     if box_no == None: 
-        print 'No box number found for the station with latitude:',lat
+        print('No box number found for the station with latitude:',lat)
     return box_no
 
 read_grid = False
@@ -345,25 +383,31 @@ stat_nos     = array(stat_pars.loc[sid_all,'Index'].astype('int'))
 if read_grid:
     nx,ny,nz = 60,45,25
     dirc = 'TransCom data\Grid data'
-    print 'Reading grid data .........'
+    print('Reading grid data .........')
     start = time.time()
     grid_data = read_grid_data(dirc)
     end = time.time()
-    print 'Reading the grid data took', end-start, 'seconds'
+    print('Reading the grid data took', end-start, 'seconds')
     grid_y = grid_yav(grid_data)
 
 # Station data
 if read_stat:
     dirc2 = 'TransCom data\Stat data'
-    print 'Reading station data ..........'
+    print('Reading station data ..........')
     start = time.time()
+<<<<<<< HEAD
 
     ch4_st,mcf_st = read_stat_data_df(dirc2,sty,edy,sid_all) # station data
     ch4_st*=1e9
     mcf_st*=1e12
     df_st   = make_dataframe(ch4_st,mcf_st,sty,edy,sid_all)
+=======
+    ch4_st,mcf_st = read_stat_data_df(dirc2,sty,edy,sid_all) # station data
+    ch4_st*=1e9
+    mcf_st*=1e12
+>>>>>>> fullpandas
     end = time.time()
-    print 'Reading the stat data took',end-start,'seconds'
+    print('Reading the stat data took',end-start,'seconds')
 
 grid_yrs = grid_data[:,0]+grid_data[:,1]/12.
 grid_ch4 = grid_data[:,2]
