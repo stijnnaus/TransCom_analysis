@@ -20,9 +20,10 @@ import netCDF4 as ncdf
 import random as rnd
 from netCDF4 import Dataset
 from mpl_toolkits.basemap import Basemap
+import seaborn as sns
+import statsmodels.api as sm
+from scipy.optimize import curve_fit
 
-
-    
 def global_mean(data, stat_nos, stat_error, box_dist, we, nruns=50, random = False):
     '''
     Calculates the global means from station data. 
@@ -186,55 +187,8 @@ def genMeas_AGAGE(data,freq,stat_ids):
     mcfgen = genMCF_AGAGE(mcfsel,freq)
     ch4gen = genCH4_AGAGE(ch4sel,freq)
     return array([ch4gen,mcfgen])
-    
             
-def filterStationData(data,nsd=2.5,ws=100):
-    '''
-    Return the flattened array of data, which consists of 1d lists
-
-    data: Either MCF or CH4 data.
-    nsd : Number of STD above which a value is considered polluted.
-    ws  : Window spacing, i.e. how many data points the window jumps after 
-            finishing each filter.
-            
-    Returns a boolean mask.
-    '''
-    if len(data)==2: return '!!You are probably trying to filter MCF and CH4 smltsly!!'
-    nst  = len(data)
-    nyr  = len(data[0]) # number of years
-    nmsy = len(data[0][0]) # number of meas per year
-    nms  = nmsy*nyr # total number of meas
-    nmo  = 12*nyr # total number of months
-    nw   = nmsy/12 # width of the filtering window in hours
-    mask_tot = np.ones((nst,nms),dtype='bool')
-    for ist,data_st in enumerate(data):
-        data_fl = data_st.flatten() # flattened data for all years
-        mask_st = mask_tot[ist]
-        for st in range(0,nms+ws,ws):
-            ed = st+nw # end of the window
-            mask_w = mask_st[st:ed]
-            data_w = data_fl[st:ed]
-            ch = True
-            while ch: # continue iterating as long as there are changes
-                med            = np.median(data_w[mask_w])   # median
-                sd             = np.std(data_w[mask_w])      # standard deviation
-                cond           = data_w[mask_w] < med+2.5*sd # check filtering condition
-                if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
-                    ch = False
-                mask_w[mask_w] = cond # implement changes
-            mask_st[st:ed] = mask_w
-        print ist
-    return mask_tot.reshape((nst,nyr,nmsy))
-    
-def filterStationData_df(df,nsd=2.5,ws=100):
-    '''
-    Same as filterStationData, only for dataframes.
-    
-    ---!!! NOT IMPLEMENTED !!!
-    '''
-    pass
-    
-def filterStationData2(data,nsd=2.5,ws=100):
+def filterStationData_ar(data,nsd=2.5,ws=100,curvefit=False,flr=0):
     '''
     This routine is designed to filter out the polluted data from the full 
     station data.
@@ -246,82 +200,297 @@ def filterStationData2(data,nsd=2.5,ws=100):
     data: Either MCF or CH4 data.
     nsd : Number of STD above which a value is considered polluted.
     ws  : Window spacing, i.e. how many data points the window jumps after 
-            finishing each filter.
+        finishing each filter.
+    flr : The floor of the filtering treshold: the minimum of flr and 2.5 SD is
+        the threshold (prevents incorrect filtering when pollution is low)
             
     Returns a boolean mask.
     '''
-    if len(data)==2: return '!!You are probably trying to filter MCF and CH4 smltsly!!'
-    nst,nms = data.shape
-    
-    data_f = data.copy()
+    nst  = len(data)
+    nyr  = len(data[0]) # number of years
+    nms  = hpy*nyr # total number of meas
+    nw   = 4*hpy/12 # width of the filtering window in hours
+    mask_tot = np.ones((nst,nms),dtype='bool')
     for ist,data_st in enumerate(data):
-        for st in range(0,nms+ws,ws):
-            ed = st + nw
-            data_fw = data_f.loc[st:ed] # window
+        data_fl = data_st.flatten() # flattened data for all years
+        mask_st = mask_tot[ist]
+        for strt in range(0,nms,ws):
+            end = strt+nw # end of the window
+            mask_w = mask_st[strt:end]
+            data_w = data_fl[strt:end]
+            nwi = len(data_w)
+            if curvefit:
+                [a,b,c],_ = curve_fit(fitfunc, np.arange(nwi), data_w)
+                fit = fitfunc(np.arange(nwi), a, b, c)
+                data_w = data_w - fit
+            ch = True
             while ch: # continue iterating as long as there are changes
-                med  = np.median(data_w[mask_w])   # median
-                sd   = np.std(data_w[mask_w])      # standard deviation
-                data_fw[data_fw > med+2.5*sd] = np.nan # check filtering condition
-                if np.all(data_fw == data_f[st:ed]): # no changes since the last iteration
+                med  = np.median(data_w[mask_w])                  # median
+                crit = (nsd*np.std(data_w[mask_w])).clip(min=flr) # standard deviation
+                cond = data_w[mask_w] < med+crit                  # check filtering condition
+                if np.all(mask_w[mask_w]==cond): # no changes since the last iteration
                     ch = False
-                    
-            mask_st[st:ed] = mask_w
-    return mask_tot.reshape((nst,nyr,nmsy))
+                mask_w[mask_w] = cond # implement changes
+            mask_st[strt:end] = mask_w
+        print 'For station',sid_all[ist],',',17*hpy-np.sum(mask_st),'points are filtered'
+    return mask_tot.reshape((nst,nyr,hpy))
+    
+def fitfunc(x,a,b,c):
+    '''Second order polynomial fit function'''
+    return a*x**2 + b*x + c
 
-ws = 100
-ch4_mask = filterStationData(ch4_st,ws=ws,nsd=2.5) # original mask
+def df_to_ar(df, nyr=17):
+    '''
+    Converts a pandas dataframe to a numpy array.
+    For this the array is made even, ie leap years are cut of.
+    '''
+    stations = df.columns
+    nst = len(stations)
+    ar = np.zeros((nst,nyr,hpy))
+    for ist,st in enumerate(stations):
+        df_st = df[st]
+        for iyr,yr in enumerate(range(sty,edy+1)):
+            df_y = df_st[str(yr)]
+            ar[ist][iyr] = array(df_y)[:hpy]
+    return ar
+    
+def filterStationData_df(df,nsd=2.5,ww=2900,stp=0,flr=0):
+    '''
+    This routine is designed to filter out the polluted data from the full 
+    station data.
+    The filtering method is adopted from AGAGE. It selects a window with a
+    width of 4 months. Then it iteratively removes all values more than nsd
+    standard deviations above the median of the window, until no more data
+    is removed.
+    
+    df  : Either MCF or CH4 pandas dataframe.
+    nsd : Number of STD above which a value is considered polluted.
+    ww  : Width of window [hours]
+    ws  : Spacing between subsequent windows
+    stp : Stop filtering when iteration filters less than stp points
+    flr : The floor of the filtering treshold: the minimum of flr and 2.5 SD is
+        the threshold (prevents incorrect filtering when pollution is low)
+            
+    Returns a boolean mask.
+    '''
+    nst, nms = df.shape
+    dr = df.index
+    dfc = df.copy()
+    for stat in df.columns:
+        print 'Filtering',stat
+        df_st  = dfc[stat]    # Select a station
+        # removing trend and seasonal cycle:
+        desea  = sm.tsa.seasonal_decompose(df_st.values, freq=hpy, model='additive')
+        df_res = pd.Series(desea.resid, index=dr) # residuals
+        df_res  = (df_res.fillna(method='bfill')).fillna(method='ffill')
+        n_nan = stp+1; n_nan0 = 0; it = 0 # initialization
+        while (n_nan-n_nan0)>stp:    # Stop if little data is removed
+            it+=1
+            n_nan0  = n_nan
+            rol     = df_res.rolling(ww,min_periods=int(ww*.8),center=True) # rolling window over data
+            crit    = (nsd*rol.std()).clip(lower=flr) # Minimum threshold is floor
+            limit   = (rol.median() + crit) # pollution limit per window
+            rol_lim = limit.rolling(ww,min_periods=0,center=True) # rolling window over limits
+            min_lim = rol_lim.min() # for each point, select the most stringent condition
+            df_res[df_res>min_lim] = np.nan
+            n_nan   = df_res.isnull().sum()
+        df_st[df_res.isnull()] = np.nan # impose filter on original station data
+        print n_nan, 'measurements filtered (or',100.*n_nan/len(df_st),'% of all measurements)'
+    return dfc
+    
+def deseasonalize(series):
+    '''
+    Deseasonalizes a pandas dataseries
+    !!! NOT IMPLEMENTED !!!
+    '''
+    pass
 
-ch4_maski  = np.invert(ch4_mask)                            # inverted mask
-ch4_maskf  = ch4_mask[0].flatten()                          # flattened mask
-ch4_maskp  = array(np.split(ch4_maskf,12*17))               # mask partitioned in months
-ch4_maskmm = np.mean(ch4_maskp,axis=1)                      # monthly mean mask
-ch4_maskym = np.mean(ch4_maskf.reshape(17*4,3*730), axis=1) # 3-monthly mean mask
-yrs = np.linspace(1990,2006,num=17*4)
-mos = np.linspace(1990,2006,num=len(ch4_maskmm))
+def glob_mean_df(df,sids,w,network='NOAA',ip=True):
+    '''
+    Calculates the global mean from station data
+    ip: If true, interpolates the nan values
+    '''
+    plt.figure()
+    df_sel = df[sids] # station selection
+    df_y = pd.DataFrame(index=df_sel.columns).interpolate(method='time',axis=0)
+    for y in range(sty,edy+1):
+        df_y[str(y)] = df_sel[str(y)].mean() # Yearly means per station
+    plt.plot(df_y.T,'--')
+    box_no = {sid:stat_pars.loc[sid]['Box_'+network] for sid in sids} # box assignment
+    df_y = df_y.groupby(box_no).mean()       # Yearly means per box
+    plt.plot(df_y.T)
+    df_yw = df_y.multiply(array(w), axis=0)  # Multiply by relative weight per box
+    df_glob = df_yw.sum(axis=0)/np.sum(w)    # Global yearly means
+    plt.plot(df_glob,'ko')
+    return df_glob
+ch4_glob_df = glob_mean_df(ch4_stf_df, sid_agage, w_gage, network='AGAGE')
+ch4_glob_df = glob_mean_df(ch4_stf_df, sid_noaa_mcf,  w_noaa, network='NOAA')
+    
+def glob_mean_ar(ar,sids,network='NOAA'):
+    pass
+    
+def moving_average(a, n=200):
+    '''
+    Moving average of a numpy array a, with a window width of n.
+    '''
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] 
 
-ch4_stf = ch4_st.copy()
-ch4_stf[ch4_maski] = np.nan # filtered ch4 station data
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#                       FILTERING STATION DATA
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+start = time.time()
+ch4_stf_df = filterStationData_df(ch4_st,ww=800)
+end = time.time()
+print 'Dataframe filter takes',end-start
+#mcf_stf = filterStationData_df(mcf_st,ww=300)
+dens_df = [ch4_stf_df[sid_all[i]].isnull().rolling(2000,center=True).mean() for i in range(12)]
 
-plt.figure()
-plt.title('density of polluted data')
-plt.ylabel('% polluted')
-plt.plot(mos,100-ch4_maskmm*100,'o',label = 'monthly '+str(ws))
-plt.plot(yrs,100-ch4_maskym*100,'-',label = 'yearly '+str(ws),linewidth=2.)
-plt.legend(loc='best')
+densw = 2000 # width of the window that computes density of polluted data
+start = time.time()
+ch4_st_ar = df_to_ar(ch4_st)
+mcf_st_ar = df_to_ar(mcf_st)
+ch4_mask_simple = filterStationData_ar(ch4_st_ar)
+dens_simple = array([moving_average(ch4_mask_simple[i].flatten(),densw) for i in range(12)]) # pollution density
+ch4_stf_ar_simple = ch4_st_ar.copy()
+ch4_stf_ar_simple[ch4_mask_simple==False] = np.nan
+print 'Simple array filter takes', time.time()-start
+start = time.time()
 
-# setting up pandas
-ch4_stfp    = make_pandas(ch4_stf,1990,2006,sid_all) # filtered pandas dataframe
-ch4_stfp_ip = ch4_stfp.interpolate(method='linear',axis=1) # interpolated
-ch4_stf_mn = ch4_stfp_ip.mean(axis=1,level=0) # yearly average filtered
-ch4_st_mn  = ch4_stp.mean(axis=1,level=0)      # yearly average unfiltered
+ch4_mask_compl = filterStationData_ar(ch4_st_ar,curvefit=True,flr=0)
+nan1 = ch4_mask_compl.sum(axis=1).sum(axis=1)
+ch4_mask_compl = filterStationData_ar(ch4_st_ar,curvefit=True,flr=.5)
+nan2 = ch4_mask_compl.sum(axis=1).sum(axis=1)
+ch4_mask_compl = filterStationData_ar(ch4_st_ar,curvefit=True,flr=2.)
+nan3 = ch4_mask_compl.sum(axis=1).sum(axis=1)
+ch4_mask_compl = filterStationData_ar(ch4_st_ar,curvefit=True,flr=5.)
+nan4 = ch4_mask_compl.sum(axis=1).sum(axis=1)
+df_nans = pd.DataFrame(np.transpose(array([nan1,nan2,nan3,nan4])), index=sid_all, columns=[0,0.5,2.,5.]) # the effect of flooring
 
-id_st = stations_all
-id_y = np.arange(1990,2007)
-id_ms = np.arange(1,8761)
-id_time = pd.MultiIndex.from_product([id_y,id_ms],names=['Year', 'Hour'])
-ch4_pn = ch4_stf.reshape((12,17*8760))
-ch4_stp = pd.DataFrame(ch4_pn, index=id_st, columns=id_time).sort_index()
-ch4_stp_ip = ch4_stp.interpolate(method='linear',axis=1) # interpolated
-ch4_st_mn = ch4_stp_ip.mean(axis=1,level=0)
+mcf_mask_compl = filterStationData_ar(mcf_st_ar,curvefit=True)
+dens_compl = array([moving_average(ch4_mask_compl[i].flatten(),densw) for i in range(12)])
+dens_mcf = array([moving_average(ch4_mask_compl[i].flatten(),densw) for i in range(12)])
+ch4_stf_ar_compl = ch4_st_ar.copy()
+ch4_stf_ar_compl[ch4_mask_compl==False] = np.nan
+mcf_stf_ar_compl = mcf_st_ar.copy()
+mcf_stf_ar_compl[mcf_mask_compl==False] = np.nan
+print '2nd order removal array filter takes', time.time()-start
+
+# plot of complete filtered v unfiltered data per station
+for i in range(12):
+    st = sid_all[i]
+    xyr = np.linspace(1990,2007,num=17*hpy)
+    fig,ax = plt.subplots(3,2)
+    ax[0,0].set_title('Simple filtering')
+    ax[1,0].set_title('Decomposed filtering')
+    ax[2,0].set_title('Second order filtering')
+    ax[0,1].set_ylabel('Pollution density(%)')
+    ax[1,1].set_ylabel('Pollution density(%)')
+    ax[2,1].set_ylabel('Pollution density(%)')
+    ax[0,0].plot(xyr, ch4_st_ar[i].flatten(), color='maroon')
+    ax[0,0].plot(xyr, ch4_stf_ar_simple[i].flatten(), color='darkgreen')
+    ax[0,1].plot(xyr[densw/2:-densw/2+1], 100-100*dens_simple[i])
+    ax[0,1].set_ylim([0,100])
+    ax[0,0].set_xlim(1990,2007)
+    ax[1,0].plot(ch4_st[st], color='maroon')
+    ax[1,0].plot(ch4_stf_df[st], color='darkgreen')
+    ax[1,1].plot(100*dens_df[i])
+    ax[1,1].set_ylim([0,100])
+    ax[2,0].plot(xyr, ch4_st_ar[i].flatten(), color='maroon')
+    ax[2,0].plot(xyr, ch4_stf_ar_compl[i].flatten(), color='darkgreen')
+    ax[2,1].plot(xyr[densw/2:-densw/2+1], 100-100*dens_compl[i])
+    ax[2,1].set_ylim([0,100])
+    plt.tight_layout()
+    plt.savefig('Figures/'+st+' CH4 filtering.png')
+    plt.close()
+    
+for i in range(12):
+    st = sid_all[i]
+    xyr = np.linspace(1990,2007,num=17*hpy)
+    fig,ax = plt.subplots(1,2)
+    ax[0].set_title('Second order filtering')
+    ax[1].set_ylabel('Pollution density(%)')
+    ax[1].set_ylim([0,100])
+    ax[0].plot(xyr, mcf_st_ar[i].flatten(), color='maroon')
+    ax[0].plot(xyr, mcf_stf_ar_compl[i].flatten(), color='darkgreen')
+    ax[1].plot(xyr[densw/2:-densw/2+1], 100-100*dens_mcf[i])
+    ax[1].set_ylim([0,100])
+    plt.tight_layout()
+    plt.savefig('Figures/'+st+' MCF filtering.png')
+    plt.close()
+    
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#                   COMPUTING GLOBAL MEANS
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 colors = ['steelblue','maroon','blue','red',      'cyan',   'magenta',\
-            'black',  'green', 'lime','peachpuff','fuchsia','silver']
-plt.figure()
-for i,st in enumerate(sid_all):
-    plt.plot(np.arange(1990,2007)+.5,ch4_stf_mn.loc[st].values,'o',color=colors[i],label=st+' filt')
-    plt.plot(np.arange(1990,2007)+.5,ch4_st_mn.loc[st].values,'v', color=colors[i],label=st+' ufilt')
-plt.legend(loc='best')
+            'black',  'green', 'lime','peachpuff','fuchsia','silver']    
 
-filt_e = ch4_stf_mn.values-ch4_st_mn.values
-filt_e_mn = np.mean(filt_e,axis=0)
-filt_e_std = np.mean(filt_e,axis=0)
-fig = plt.figure()
-ax1 = fig.add_subplot(111)
-ax1.set_xticklabels(sid_all)
-ax1.tick_params(axis = 'x', which = 'both', labelsize = 15)
-for i,st in enumerate(sid_all):
-    ax1.errorbar(np.arange(0,17),filt_e_mn,yerr=filt_e_std,fmt='o')
-ax1.legend(loc='best')
+yrs_gr,ch4_gr,mcf_gr = grid_y[1:-1,0],grid_y[1:-1,1],grid_y[1:-1,2]
+ch4_glob_df = glob_mean_df(ch4_stf_df, sid_agage, w_gage, network='AGAGE')
+ch4_glob_uf = glob_mean_df(ch4_st    , sid_agage, w_gage, network='AGAGE')
+
+# plot of the yearly global mean from grid, filtered and unfiltered (3 methods) data
+fig, ax = plt.subplots(1,1)
+ax.set_title('Global mean CH4 from different methods')
+ax.plot(grid_y[1:-1,0],grid_y[1:-1,1],label='From grid (True)')
+ax.plot(grid_y[1:-1,0],ch4_glob_df.values,label='From decomposition')
+ax.plot(grid_y[1:-1,0],ch4_glob_uf.values,label='Unfiltered')
+ax.legend(loc='best')
+
+# Plot of station yearly means versus gridded yearly means
+yrs_df = np.linspace(1990,2007,num=len(ch4_st['CGO'].values))
+rol_st = ch4_st.rolling(hpy,min_periods=100,center=True).mean()
+rol_stf = ch4_stf_df.interpolate(method='time',axis=0).rolling(hpy,min_periods=100,center=True).mean()
+fig,ax = plt.subplots(1,1)
+for i,st in enumerate(rol_st.columns):
+    ax.plot(yrs_df,rol_st[st].values,'--',color=colors[i],label=st)
+    ax.plot(yrs_df,rol_stf[st].values,'-',color=colors[i],label=st)
+ax.plot(grid_y[1:-1,0],grid_y[1:-1,1],'ko-',label='gridded mean')
+ax.plot(grid_y[1:-1,0],ch4_glob_df,'k-',label='station mean filt')
+ax.plot(grid_y[1:-1,0],ch4_glob_df,'k--',label='station mean unfilt')
+ax.legend(loc='best')
+ax.set_ylim([1650,1950])
+#plt.plot(ch4_glob_df,'ko',linewidth=2)
+
+# Plot of the errors in the global yearly means wrt gridded means
+fig,ax = plt.subplots(1,2)
+# from unfiltered data
+dif_uf = ch4_gr - ch4_glob_uf
+mer_uf = np.abs(dif_uf - np.mean(dif_uf))
+ax[0].set_title('From unfiltered data')
+ax[0].plot(grid_y[1:-1,0],mer_uf,'o',color='maroon',label='From decomp')
+ax[0].plot(np.linspace(1990,2007),[np.mean(mer_uf)]*50,'-',color='maroon',label='From decomp')
+ax[0].fill_between(np.linspace(1990,2007), [np.mean(mer_uf)+np.std(mer_uf)]*50, 
+                 [np.mean(mer_uf)-np.std(mer_uf)]*50, color='maroon',alpha=.5) # STD
+ax[0].fill_between(np.linspace(1990,2007), 
+                    [np.mean(mer_uf)+np.std(mer_uf)/np.sqrt(17)]*50, 
+                    [np.mean(mer_uf)-np.std(mer_uf)/np.sqrt(17)]*50, 
+                     color='maroon',alpha=.3) # SDOM
+                     
+# From seasonal decomposition
+dif_dec = (grid_y[1:-1,1]-ch4_glob_df.values) # difference between the two
+mer_dec = np.abs(dif_dec-np.mean(dif_dec))    # absolute error in growth rate
+ax[1].set_title('From seasonal decomposition')
+ax[1].plot(grid_y[1:-1,0],mer_dec,'o',color='maroon',label='From decomp')
+ax[1].plot(np.linspace(1990,2007),[np.mean(mer_dec)]*50,'-',color='maroon',label='From decomp')
+ax[1].fill_between(np.linspace(1990,2007), [np.mean(mer_dec)+np.std(mer_dec)]*50, 
+                 [np.mean(mer_dec)-np.std(mer_dec)]*50, color='maroon',alpha=.5) # STD
+ax[1].fill_between(np.linspace(1990,2007), 
+                    [np.mean(mer_dec)+np.std(mer_dec)/np.sqrt(17)]*50, 
+                    [np.mean(mer_dec)-np.std(mer_dec)/np.sqrt(17)]*50, 
+                     color='maroon',alpha=.3) # SDOM
+
+#ax[0].plot(label='From grid (True)')
+#ax[0].plot(label='From grid (True)')
+
+
+
+
+'''
+colors = ['steelblue','maroon','blue','red',      'cyan',   'magenta',\
+            'black',  'green', 'lime','peachpuff','fuchsia','silver']
 
 # ++++++++++++++++++++++++++++++++++
 #               AGAGE
@@ -371,14 +540,6 @@ ax2.plot(np.linspace(1990,2007),[0]*50,'k-',linewidth=2.)
 ax1.legend(loc='best')
 ax2.legend(loc='best')
 
-df1 = pd.DataFrame({'employee': ['Bob', 'Jake', 'Lisa', 'Sue','Molly'],
-                    'group': ['Accounting', 'Engineering', 'Engineering', 'HR','Baby']})
-df2 = pd.DataFrame({'employee': ['Lisa', 'Bob', 'Jake', 'Sue'],
-                    'hire_date': [2004, 2008, 2012, 2014]})
-
-
-'''
-
 load_grd_data = False
 load_station_data = False
 make_plots = True
@@ -393,22 +554,22 @@ mcfe = 2.
 if load_grd_data:
     nx,ny,nz = 60,45,25
     dirc = 'TransCom data\Grid data'
-    print 'Reading grid data .........'
+    print('Reading grid data .........')
     start = time.time()
     grid_data = read_grid_data(dirc)
     end = time.time()
-    print 'Reading the grid data took', end-start, 'seconds'
+    print('Reading the grid data took', end-start, 'seconds')
     grid_y = grid_yav(grid_data)
 
 if load_station_data:
     dirc2 = 'TransCom data\Stat data'
-    print 'Reading station data ..........'
+    print('Reading station data ..........')
     start = time.time()
     stat_data = read_stat_data(dirc2) # raw station data
     yrs,stat_sel = select_time(stat_data,sty,edy) # data for selected years
     station_data = stat_reform(stat_sel) # final station data
     end = time.time()
-    print 'Reading the stat data took',end-start,'seconds'
+    print('Reading the stat data took',end-start,'seconds')
 
 
 
@@ -480,231 +641,7 @@ ch4_gage, ch4_e_gage = global_mean(stat_ch4, gage_nos, stat_error_ch4, box_dist_
 mcf_gage_rnd, mcf_e_gage_rnd = global_mean(stat_mcf, gage_nos, stat_error_mcf, box_dist_gage, w_gage, random=True)
 ch4_gage_rnd, ch4_e_gage_rnd = global_mean(stat_ch4, gage_nos, stat_error_ch4, box_dist_gage, w_gage, random=True)
 
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-#                       Gridded data calculations
-grid_data = Dataset(file1, 'r')
-mcf_head = grid_data.variables['mcf']
-mcf_grid = mcf_head[:]
-ch4_head = grid_data.variables['ch4ctl']
-ch4_grid = ch4_head[:]
-(nz, ny, nx) = mcf_grid.shape
-
-lat = np.linspace(-90, 90, num=ny) # latitudinal grid distribution
-lon = np.linspace(0, 360, num=nx) # longitudinal grid distribution
-vert = np.linspace(0, 25, num=nz) # vertical layers
-
-# Global means from the gridded data
-ch4_grd_10k = round(np.mean(ch4_grid[:10])*1e9, 2)
-mcf_grd_10k = round(np.mean(mcf_grid[:10])*1e12, 2)
-ch4_grd_15k = round(np.mean(ch4_grid[:15])*1e9, 2)
-mcf_grd_15k = round(np.mean(mcf_grid[:15])*1e12, 2)
-ch4_grd_20k = round(np.mean(ch4_grid[:20])*1e9, 2)
-mcf_grd_20k = round(np.mean(mcf_grid[:20])*1e12, 2)
-
-if make_plots:
-    # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    #                               PLOTS
-
-    # STATION DATA
-    fig = plt.figure(figsize=(10,20))
-    ax1 = fig.add_subplot(211)
-    ax1.errorbar(stat_decdat, mcf_mon*1e12, yerr=mcf_e_mon*1e12, label='Mean from NOAA stations')
-    ax1.errorbar(stat_decdat, mcf_gage*1e12, yerr=mcf_e_gage*1e12, label='Mean from (A)GAGE stations')
-    ax1.plot(stat_decdat, [mcf_grd_10k]*nmeas, 'r--', label='Mean from grid (lower 10km)')
-    ax1.plot(stat_decdat, [mcf_grd_15k]*nmeas, 'r-', label='Mean from grid (lower 15km)')
-    #ax1.plot(stat_decdat, [mcf_grd_20k]*nmeas, 'r-.', label='Mean from grid (lower 20km)')
-    ax1.set_title('Time evolution of the global mean MCF concentration, as calculated\n\
-    from station data during one month. For each station we take the measurements \n\
-    at the same timestep (x-axis) Both mean concentrations\n\
-    from the NOAA as well as from the (A)GAGE stations are given',y=1.05)
-    ax1.set_ylabel('MCF (ppt)')
-    ax2 = fig.add_subplot(212)
-    ax2.errorbar(stat_decdat, ch4_mon*1e9, yerr=ch4_e_mon*1e9, label='Mean from NOAA stations')
-    ax2.errorbar(stat_decdat, ch4_gage*1e9, yerr=ch4_e_gage*1e9, label='Mean from (A)GAGE stations')
-    ax2.plot(stat_decdat, [ch4_grd_10k]*nmeas, 'r--', label='Mean from grid (lower 10km)')
-    ax2.plot(stat_decdat, [ch4_grd_15k]*nmeas, 'r-', label='Mean from grid (lower 15km)')
-    ax2.set_title(r'Time evolution of the global mean CH$_4$'+' concentration,\n\
-    as calculated from station data during one month',y=1.05)
-    ax2.set_xlabel('Time')
-    ax2.set_ylabel(r'CH$_4$ (ppb)')
-    lgd = ax1.legend(loc='best')
-    plt.tight_layout()
-    plt.savefig('Station_CH4_MCF_means')
-    
-    fig = plt.figure(figsize=(10,20))
-    ax1 = fig.add_subplot(211)
-    ax1.errorbar(stat_decdat, mcf_mon_rnd*1e12, yerr=mcf_e_mon_rnd*1e12, label='Mean from NOAA stations')
-    ax1.errorbar(stat_decdat, mcf_gage_rnd*1e12, yerr=mcf_e_gage_rnd*1e12, label='Mean from (A)GAGE stations')
-    ax1.plot(stat_decdat, [mcf_grd_10k]*nmeas, 'r--', label='Mean from grid (lower 10km)')
-    ax1.plot(stat_decdat, [mcf_grd_15k]*nmeas, 'r-', label='Mean from grid (lower 15km)')
-    #ax1.plot(stat_decdat, [mcf_grd_20k]*nmeas, 'r-.', label='Mean from grid (lower 20km)')
-    ax1.set_title('Time evolution of the global mean MCF concentration, as calculated\n\
-    from station data during one month. For each station we take the measurements\n\
-    at a different random timesteps. Both mean concentrations\n\
-    from the NOAA as well as from the (A)GAGE stations are given',y=1.05)
-    ax1.set_ylabel('MCF (ppt)')
-    ax2 = fig.add_subplot(212)
-    ax2.errorbar(stat_decdat, ch4_mon_rnd*1e9, yerr=ch4_e_mon_rnd*1e9, label='Mean from NOAA stations')
-    ax2.errorbar(stat_decdat, ch4_gage_rnd*1e9, yerr=ch4_e_gage_rnd*1e9, label='Mean from (A)GAGE stations')
-    ax2.plot(stat_decdat, [ch4_grd_10k]*nmeas, 'r--', label='Mean from grid (lower 10km)')
-    ax2.plot(stat_decdat, [ch4_grd_15k]*nmeas, 'r-', label='Mean from grid (lower 15km)')
-    ax2.set_title(r'Time evolution of the global mean CH$_4$'+' concentration,\n\
-    as calculated from station data during one month',y=1.05)
-    ax2.set_xlabel('Time')
-    ax2.set_ylabel(r'CH$_4$ (ppb)')
-    lgd = ax1.legend(loc='best')
-    plt.tight_layout()
-    plt.savefig('Station_CH4_MCF_means_rnd')
-    
-    mcf_vert = np.mean(mcf_grid, axis=(1,2))
-    mcf_lat = np.mean(mcf_grid, axis=(0,2))
-    mcf_lat_l10 = np.mean(mcf_grid[:10], axis=(0,2))
-    mcf_lon = np.mean(mcf_grid, axis=(0,1))
-    mcf_zy = np.mean(mcf_grid, axis=2)
-    mcf_xy = np.mean(mcf_grid, axis=0)
-    mcf_xz = np.mean(mcf_grid, axis=1)
-    mcf_xytrop = np.mean(mcf_grid[:10], axis=0)
-    ch4_vert = np.mean(ch4_grid, axis=(1,2))
-    ch4_lat = np.mean(ch4_grid, axis=(0,2))
-    ch4_lat_l10 = np.mean(ch4_grid[:10], axis=(0,2))
-    ch4_lon = np.mean(ch4_grid, axis=(0,1))
-    ch4_zy = np.mean(ch4_grid, axis=2)
-    ch4_xy = np.mean(ch4_grid, axis=0)
-    ch4_xz = np.mean(ch4_grid, axis=1)
-    ch4_xytrop = np.mean(ch4_grid[:10,:,:], axis=0)
-    
-    fig = plt.figure(figsize=(20,20))
-    ax1 = fig.add_subplot(221)
-    ax2 = fig.add_subplot(223)
-    ax1.set_title('Globally averaged vertical profile of MCF')
-    ax1.set_xlabel('MCF (ppt)')
-    ax1.set_ylabel('Vertical height (km)')
-    ax1.plot(mcf_vert*1e12, vert, 'o-')
-    ax2.set_title('Zonally averaged distribution of MCF, \n\
-    (lower 10 km)')
-    ax2.set_xlabel('Latitude')
-    ax2.set_ylabel('MCF (ppt)')
-    ax2.plot(lat, mcf_lat_l10*1e12, 'o-') 
-    ax3 = fig.add_subplot(222)
-    ax4 = fig.add_subplot(224)
-    ax3.set_title('Globally averaged vertical profile of '+r'CH$_4$')
-    ax3.set_xlabel(r'CH$_4$ (ppb)')
-    ax3.set_ylabel('Vertical height (km)')
-    ax3.plot(ch4_vert*1e9, vert, 'o-')
-    ax4.set_title('Zonally averaged distribution of '+r'CH$_4$'+',\n\
-    (lower 10 km)')
-    ax4.set_xlabel('Latitude')
-    ax4.set_ylabel(r'CH$_4$ (ppb)')
-    ax4.plot(lat, ch4_lat_l10*1e9, 'o-')
-    fig.savefig('Global_MCF_CH4_distribution_1D')
-    plt.close()
-    
-    fig = plt.figure(figsize=(10,30))
-    ax1 = fig.add_subplot(311)
-    ax1.set_title('Zonally averaged MCF concentration')
-    ax1.set_xlabel('Latitude (deg)')
-    ax1.set_ylabel('Height (km)')
-    cp_yz = ax1.contourf(lat, vert, mcf_zy*1e12, 400)
-    cb_yz = plt.colorbar(cp_yz)
-    cb_yz.set_label('MCF (ppt)')
-    ax2 = fig.add_subplot(312)
-    ax2.set_title('Latidunally averaged MCF concentration')
-    ax2.set_xlabel('Longitude (deg)')
-    ax2.set_ylabel('Height (km)')
-    cp_xz = ax2.contourf(lon, vert, mcf_xz*1e12, 400)
-    cb_xz = plt.colorbar(cp_xz)
-    cb_xz.set_label('MCF (ppt)')
-    ax3 = fig.add_subplot(313)
-    ax3.set_title('Vertically averaged MCF concentration (lower 10 km)')
-    ax3.set_xlabel('Longitude (deg)')
-    ax3.set_ylabel('Latitude (deg)')
-    cp_xy = ax3.contourf(lon, lat, mcf_xytrop*1e12, 400)
-    cb_xy = plt.colorbar(cp_xy)
-    cb_xy.set_label('MCF (ppt)')
-    fig.tight_layout()
-    fig.savefig('Global_MCF_distribution_2D')
-    plt.close()
-    
-    fig = plt.figure(figsize=(10,30))
-    ax1 = fig.add_subplot(311)
-    ax1.set_title('Zonally averaged CH4 concentration')
-    ax1.set_xlabel('Latitude (deg)')
-    ax1.set_ylabel('Height (km)')
-    cp_yz = ax1.contourf(lat, vert, ch4_zy*1e9, 400)
-    cb_yz = plt.colorbar(cp_yz)
-    cb_yz.set_label('CH4 (ppb)')
-    ax2 = fig.add_subplot(312)
-    ax2.set_title('Latidunally averaged CH4 concentration')
-    ax2.set_xlabel('Longitude (deg)')
-    ax2.set_ylabel('Height (km)')
-    cp_xz = ax2.contourf(lon, vert, ch4_xz*1e9, 400)
-    cb_xz = plt.colorbar(cp_xz)
-    cb_xz.set_label('CH4 (ppb)')
-    ax3 = fig.add_subplot(313)
-    ax3.set_title('Vertically averaged CH4 concentration (lower 10 km)')
-    ax3.set_xlabel('Longitude (deg)')
-    ax3.set_ylabel('Latitude (deg)')
-    cp_xy = ax3.contourf(lon, lat, ch4_xytrop*1e9, 400)
-    cb_xy = plt.colorbar(cp_xy)
-    cb_xy.set_label('CH4 (ppb)')
-    fig.tight_layout()
-    fig.savefig('Global_CH4_distribution_2D')    
-    
-    fig = plt.figure(figsize=(10,20))
-    ax1 = fig.add_subplot(211)
-    ax1.set_title(r'Global CH$_4$ distribution, February 2000\n\
-        The (A)GAGE stations are also indicated.')
-    m_ch4 = Basemap(projection='cyl',lon_0=0,resolution='c')
-    m_ch4.drawparallels(np.arange(-90.,91.,30.), labels=[True, False, False, False])
-    m_ch4.drawmeridians(np.arange(-180.,181.,60.), labels=[False, False, False, True])
-    m_ch4.drawcoastlines()
-    lons, lats = m_ch4.makegrid(nx, ny) # get lat/lons of ny by nx evenly space grid.
-    x, y = m_ch4(lons, lats) # compute map proj coordinates.
-    cs = m_ch4.contourf(x, y, ch4_xytrop*1e9, 20)
-    cb = m_ch4.colorbar(cs)
-    cb.set_label('CH4 (ppb)')
-    xstat, ystat = m_ch4(gage_lon, gage_lat)
-    for i,stat in enumerate(gage_stats):
-        xi,yi = xstat[i],ystat[i]
-        m_ch4.plot(xi, yi, 'ko')
-        plt.text(xi-8,yi+2.,stat)
-    ax2 = fig.add_subplot(212)
-    ax2.set_title('Global MCF distribution, February 2000\n\
-        The NOAA stations are also indicated.')
-    m_mcf = Basemap(projection='cyl',lon_0=0,resolution='c')
-    m_mcf.drawparallels(np.arange(-90.,91.,30.), labels=[True, False, False, False])
-    m_mcf.drawmeridians(np.arange(-180.,181.,60.), labels=[False, False, False, True])
-    m_mcf.drawcoastlines()
-    x, y = m_mcf(lons, lats) # compute map proj coordinates.
-    cs = m_mcf.contourf(x, y, mcf_xytrop*1e12, 20)
-    cb = m_mcf.colorbar(cs)
-    cb.set_label('MCF (ppt)')
-    xstat, ystat = m_mcf(mon_lon, mon_lat)
-    for i,stat in enumerate(mon_stats):
-        xi,yi = xstat[i],ystat[i]
-        m_mcf.plot(xi, yi, 'ko')
-        if stat == 'KUM':
-            plt.text(xi-8,yi-8.,stat)
-        else:
-            plt.text(xi-8,yi+2.,stat)
-    plt.savefig('Global_CH4_MCF_distribution_map')
 '''
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
