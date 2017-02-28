@@ -120,26 +120,6 @@ def read_stat_data_df(direc,sty,edy,stations):
     '''
     cwd = os.getcwd()
     indir = os.path.join(cwd,direc)    
-<<<<<<< HEAD
-<<<<<<< HEAD
-    date_id = pd.date_range(sty,edy)
-    df_ch4 = pd.DataFrame(columns=stations)
-    df_mcf = pd.DataFrame(columns=stations)
-    stat_nos = array(stat_pars.loc[stations,'Index'].astype('int'))
-    for root,dirs,filenames in os.walk(indir):
-        for i,f in enumerate(filenames): # reading in the station data files
-            fi    = os.path.join(root,f)
-            data  = xar.open_dataset(fi)
-            yr,mo = unpack_hdf(data, as_pd=True) # year,month corresponding to data
-            if yr<sty | yr>edy: continue
-            id_date = pd_
-            ch4 = data['ch4ctl_grd'].values[stat_nos]
-            mcf = data['mcf_grd'].values[stat_nos]
-            df_ch4.loc[id_date, stations] = ch4
-            df_mcf.loc[id_date, stations] = mcf
-=======
-=======
->>>>>>> origin/master
     # All hourly date indices from start of start year to end of end year:
     date_id = pd.date_range(str(sty),str(edy+1), freq='H', closed='left') 
     df_ch4 = pd.DataFrame(index=date_id,columns=stations) # Set up dataframe for ch4
@@ -160,11 +140,9 @@ def read_stat_data_df(direc,sty,edy,stations):
             except KeyError,msg:
                 print('ERROR@',yr,mo,id_date)
                 raise KeyError(msg)
-<<<<<<< HEAD
     for st in stations: # convert from objects to floats
         df_ch4[st] = pd.to_numeric(df_ch4[st])
         df_mcf[st] = pd.to_numeric(df_mcf[st])
->>>>>>> fullpandas
     return df_ch4, df_mcf
 
 def sort_stat(data):
@@ -173,16 +151,6 @@ def sort_stat(data):
     This is somewhat complicated because station data is not rectangular and
     thus not a numpy array.
     '''
-=======
-    return df_ch4, df_mcf
-
-def sort_stat(data):
-    '''
-    Sort station data according to year and month.
-    This is somewhat complicated because station data is not rectangular and
-    thus not a numpy array.
-    '''
->>>>>>> origin/master
     yrs = array([item[0] for item in data])
     mos = array([item[1] for item in data])
     keys_srt = np.lexsort((mos,yrs))
@@ -208,15 +176,7 @@ def make_dataframe(ch4,mcf,sty,edy,stations):
     col_yr = np.tile(np.repeat(np.arange(sty,edy+1),hpy),nst)
     col_mo = np.tile(np.repeat(np.arange(0,12),hpm), nst*nyr)
     col_hr = np.tile(np.arange(0,hpm), nst*nyr*12)
-<<<<<<< HEAD
-<<<<<<< HEAD
-    print col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape
-=======
     print(col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape)
->>>>>>> fullpandas
-=======
-    print(col_st.shape,col_yr.shape,col_mo.shape,col_hr.shape,ch4f.shape,mcff.shape)
->>>>>>> origin/master
     datat = np.column_stack((col_st,col_yr,col_mo,col_hr,ch4f,mcff))
     colum = pd.Index(['station','year','month','hour','ch4','mcf'])
     df    = pd.DataFrame(datat, columns=colum)
@@ -283,23 +243,11 @@ def pd_splitmonth(yr,mo,frq='H'):
     frq.
     yr,mo: Integers specifying the month
     '''
-<<<<<<< HEAD
-<<<<<<< HEAD
-    st_date = str(yr)+str(mo)                   # start date
-    if mo == 12: ed_date = str(yr+1)+str(mo)    # end date (+1 month)
-    else: ed_date = str(yr)+str(mo+1)           # if not the last month
-=======
-=======
->>>>>>> origin/master
     st_date = str(yr)+str(mo)       # start date
     if mo == 12: 
         ed_date = str(yr+1)+str(1) # end date (+1 month)
     else: 
         ed_date = str(yr)+str(mo+1) # if not the last month
-<<<<<<< HEAD
->>>>>>> fullpandas
-=======
->>>>>>> origin/master
     st_date,ed_date = pd.to_datetime([st_date,ed_date], format='%Y%m') # convert to pandas
     dater = pd.date_range(st_date,ed_date, freq=frq, closed='left') # generate the hourly dates
     return dater
@@ -419,20 +367,9 @@ if read_stat:
     dirc2 = 'TransCom data\Stat data'
     print('Reading station data ..........')
     start = time.time()
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-=======
->>>>>>> origin/master
     ch4_st,mcf_st = read_stat_data_df(dirc2,sty,edy,sid_all) # station data
     ch4_st*=1e9
     mcf_st*=1e12
-    df_st   = make_dataframe(ch4_st,mcf_st,sty,edy,sid_all)
-=======
-    ch4_st,mcf_st = read_stat_data_df(dirc2,sty,edy,sid_all) # station data
-    ch4_st*=1e9
-    mcf_st*=1e12
->>>>>>> fullpandas
     end = time.time()
     print('Reading the stat data took',end-start,'seconds')
 
